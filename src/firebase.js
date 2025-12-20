@@ -3,12 +3,12 @@ import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAxqyNuFOnSlRJCxsv-ekxBuEkYq1KbH5Q",
-  authDomain: "chess-op-45485.firebaseapp.com",
-  projectId: "chess-op-45485",
-  storageBucket: "chess-op-45485.firebasestorage.app",
-  messagingSenderId: "195557548464",
-  appId: "1:195557548464:web:0bc1ff292149c6d0587675"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
