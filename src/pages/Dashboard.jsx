@@ -1,5 +1,6 @@
 import { useAuth } from "../context/AuthContext";
 
+// Protected page - only accessible to logged-in users
 export default function Dashboard() {
   const { user, logout } = useAuth();
 

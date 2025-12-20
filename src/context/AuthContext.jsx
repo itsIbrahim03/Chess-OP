@@ -2,27 +2,27 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { auth, googleProvider } from "../firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
+// Context API - allows sharing user state across the entire app without prop drilling
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Login Function
   const login = () => signInWithPopup(auth, googleProvider);
-
-  // Logout Function
   const logout = () => signOut(auth);
 
-  // Listen for changes (Did user log in? log out?)
+  // Listen for auth state changes (login/logout events)
+  // onAuthStateChanged returns an unsubscribe function for cleanup
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       setLoading(false);
     });
-    return () => unsubscribe();
+    return () => unsubscribe(); // Clean up listener when component unmounts
   }, []);
 
+  // Don't render children until we know the auth state to prevent flashing
   return (
     <AuthContext.Provider value={{ user, login, logout }}>
       {!loading && children}
@@ -30,4 +30,5 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
+// Custom hook to access auth context in any component
 export const useAuth = () => useContext(AuthContext);
