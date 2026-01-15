@@ -132,3 +132,5 @@ export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white' 
         </div>
     );
 }
+
+export default CustomChessboard;
