@@ -1,13 +1,16 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import Login from "./pages/Login";
+import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
+import Repertoire from "./pages/Repertoire";
 
 // Wrapper component that redirects to login if user is not authenticated
 // This protects routes that require login
 const ProtectedRoute = ({ children }) => {
-  const { user } = useAuth();
-  if (!user) return <Navigate to="/" />;
+  const { user, loading } = useAuth();
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <Navigate to="/login" />;
   return children;
 };
 
@@ -17,13 +20,23 @@ export default function App() {
       {/* AuthProvider wraps everything to share user state across all components */}
       <AuthProvider>
         <Routes>
-          <Route path="/" element={<Login />} />
-          {/* Dashboard is wrapped in ProtectedRoute - only accessible after login */}
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<Login />} />
+
+          {/* Dashboard Routes */}
           <Route
             path="/dashboard"
             element={
               <ProtectedRoute>
                 <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/repertoire"
+            element={
+              <ProtectedRoute>
+                <Repertoire />
               </ProtectedRoute>
             }
           />
