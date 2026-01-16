@@ -19,7 +19,18 @@ export default function DashboardLayout({ children }) {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
-    const [sidebarOpen, setSidebarOpen] = useState(true);
+
+    // Persist sidebar state in localStorage
+    const [sidebarOpen, setSidebarOpen] = useState(() => {
+        const saved = localStorage.getItem('sidebarOpen');
+        return saved !== null ? JSON.parse(saved) : true;
+    });
+
+    // Save to localStorage when state changes
+    const toggleSidebar = (value) => {
+        setSidebarOpen(value);
+        localStorage.setItem('sidebarOpen', JSON.stringify(value));
+    };
 
     const menuItems = [
         { icon: LayoutDashboard, label: 'Overview', path: '/dashboard' },
@@ -47,20 +58,17 @@ export default function DashboardLayout({ children }) {
                     hidden lg:flex
                 `}
             >
-                {/* Toggle Button (Desktop) */}
-                <button
-                    onClick={() => setSidebarOpen(!sidebarOpen)}
-                    className="absolute -right-3 top-9 bg-chess-panel border border-white/10 text-chess-text-secondary hover:text-white rounded-full p-1 shadow-lg z-50 hover:bg-white/5 transition-colors"
-                >
-                    {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-                </button>
+
 
                 <div className="h-full flex flex-col w-full">
-                    {/* Logo Area */}
-                    <div className={`h-24 flex items-center ${sidebarOpen ? 'px-6 gap-3' : 'justify-center px-0'} border-b border-white/5`}>
-                        <img src="/logo/Logo-icon.png" alt="Logo" className={`${sidebarOpen ? 'w-10 h-10' : 'w-10 h-10'} object-contain transition-all`} />
+                    {/* Logo Area - Click to toggle sidebar */}
+                    <div
+                        onClick={() => toggleSidebar(!sidebarOpen)}
+                        className={`h-24 flex items-center border-b border-white/5 transition-all cursor-pointer hover:bg-white/5 ${sidebarOpen ? 'gap-3 pl-8 pr-6' : 'justify-center'}`}
+                    >
+                        <img src="/logo/Logo-icon.png" alt="Logo" className={`object-contain transition-all ${sidebarOpen ? 'w-14 h-14' : 'w-12 h-12'}`} />
                         {sidebarOpen && (
-                            <span className="font-serif font-bold text-2xl text-white tracking-wide whitespace-nowrap overflow-hidden">
+                            <span className="font-serif font-bold text-2xl text-white tracking-wide">
                                 Chess<span className="text-chess-accent">-OP</span>
                             </span>
                         )}
@@ -73,7 +81,7 @@ export default function DashboardLayout({ children }) {
                             return (
                                 <button
                                     key={item.path}
-                                    onClick={() => navigate(item.path)}
+                                    onClick={(e) => { e.stopPropagation(); navigate(item.path); }}
                                     className={`w-full flex items-center p-3 rounded-xl transition-all group relative ${isActive
                                         ? 'bg-chess-accent text-white shadow-lg shadow-chess-accent/20'
                                         : 'text-chess-text-secondary hover:bg-white/5 hover:text-white'

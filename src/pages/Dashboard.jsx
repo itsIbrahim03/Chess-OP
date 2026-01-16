@@ -1,15 +1,41 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
 import { Play, Star, Clock, Plus, ArrowUpRight, Trophy, Flame, BookOpen, History } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { getUserProfile } from '../services/userService';
+import { getUserPuzzleStats } from '../services/puzzleService';
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState(null);
+  const [puzzleStats, setPuzzleStats] = useState(null);
 
   // Extract first name for greeting
   const firstName = user?.displayName?.split(' ')[0]
     || user?.email?.split('@')[0]
     || 'Player';
+
+  useEffect(() => {
+    loadData();
+  }, [user]);
+
+  const loadData = async () => {
+    try {
+      const [profile, stats] = await Promise.all([
+        getUserProfile(user.uid),
+        getUserPuzzleStats(user.uid)
+      ]);
+      setUserProfile(profile);
+      setPuzzleStats(stats);
+    } catch (error) {
+      console.error('Failed to load dashboard data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Dummy Data for UI Development
   const activePlaylists = [
@@ -43,9 +69,11 @@ export default function Dashboard() {
             <Trophy size={64} />
           </div>
           <h3 className="text-chess-text-secondary text-sm font-medium mb-1">Total Puzzles Solved</h3>
-          <div className="text-3xl font-bold text-white mb-2">1,284</div>
-          <div className="text-chess-status-success text-sm flex items-center gap-1">
-            <ArrowUpRight size={16} /> +24 this week
+          <div className="text-3xl font-bold text-white mb-2">
+            {loading ? '...' : (userProfile?.stats?.totalSolved || 0).toLocaleString()}
+          </div>
+          <div className="text-chess-text-secondary text-sm">
+            {loading ? 'Loading...' : `${puzzleStats?.total || 0} total puzzles`}
           </div>
         </div>
         <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl relative overflow-hidden group">
@@ -53,10 +81,17 @@ export default function Dashboard() {
             <Flame size={64} />
           </div>
           <h3 className="text-chess-text-secondary text-sm font-medium mb-1">Current Streak</h3>
-          <div className="text-3xl font-bold text-white mb-2">12 Days</div>
-          <div className="text-brand-med text-sm">Keep it up!</div>
+          <div className="text-3xl font-bold text-white mb-2">
+            {loading ? '...' : `${userProfile?.stats?.streak || 0} Days`}
+          </div>
+          <div className="text-chess-status-info text-sm">
+            {userProfile?.lichessUsername ? 'Connected to Lichess' : 'Link Lichess in Settings'}
+          </div>
         </div>
-        <div className="bg-gradient-to-br from-chess-accent to-chess-accent/80 p-6 rounded-2xl relative overflow-hidden text-white shadow-lg shadow-chess-accent/20 cursor-pointer hover:shadow-chess-accent/40 transition-shadow">
+        <div
+          onClick={() => navigate('/dashboard/analyze')}
+          className="bg-gradient-to-br from-chess-accent to-chess-accent/80 p-6 rounded-2xl relative overflow-hidden text-white shadow-lg shadow-chess-accent/20 cursor-pointer hover:shadow-chess-accent/40 transition-shadow"
+        >
           <h3 className="text-white/90 text-sm font-medium mb-1">Quick Start</h3>
           <div className="text-2xl font-bold mb-4">Resume Training</div>
           <button className="bg-white text-chess-accent px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2">

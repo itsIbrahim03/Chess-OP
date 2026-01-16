@@ -4,6 +4,8 @@ import Login from "./pages/Login";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Repertoire from "./pages/Repertoire";
+import Settings from "./pages/Settings";
+import GameAnalysis from "./pages/GameAnalysis";
 
 // Wrapper component that redirects to login if user is not authenticated
 // This protects routes that require login
@@ -37,6 +39,22 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Repertoire />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/settings"
+            element={
+              <ProtectedRoute>
+                <Settings />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/dashboard/analyze"
+            element={
+              <ProtectedRoute>
+                <GameAnalysis />
               </ProtectedRoute>
             }
           />
