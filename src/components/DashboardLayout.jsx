@@ -12,7 +12,8 @@ import {
     Menu,
     X,
     Search,
-    Bell
+    Bell,
+    Target
 } from 'lucide-react';
 
 export default function DashboardLayout({ children }) {
@@ -34,6 +35,7 @@ export default function DashboardLayout({ children }) {
 
     const menuItems = [
         { icon: LayoutDashboard, label: 'Overview', path: '/dashboard' },
+        { icon: Target, label: 'Training Arena', path: '/dashboard/train' },
         { icon: BookOpen, label: 'My Repertoire', path: '/dashboard/repertoire' },
         { icon: History, label: 'Game History', path: '/dashboard/history' },
         { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
@@ -68,7 +70,7 @@ export default function DashboardLayout({ children }) {
                     >
                         <img src="/logo/Logo-icon.png" alt="Logo" className={`object-contain transition-all ${sidebarOpen ? 'w-14 h-14' : 'w-12 h-12'}`} />
                         {sidebarOpen && (
-                            <span className="font-serif font-bold text-2xl text-white tracking-wide">
+                            <span className="font-serif font-bold text-3xl text-white tracking-wide">
                                 Chess<span className="text-chess-accent">-OP</span>
                             </span>
                         )}
