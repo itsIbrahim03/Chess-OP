@@ -12,6 +12,7 @@
   "dependencies": {
     "@chess-openings/eco.json": "^1.1.0",
     "chess.js": "^1.4.0",
+    "chessground": "^9.2.1",
     "firebase": "^12.6.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.0",
