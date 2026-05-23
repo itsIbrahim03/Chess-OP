@@ -26,7 +26,7 @@ class EngineService {
             this.listeners.forEach(callback => callback(message));
         };
 
-        this.worker.onerror = (err) => {
+        this.worker.onerror = () => {
             // Keep error logging for critical failures, or remove if strictly requested? 
             // User said "nothing... printed", usually implies info logs. 
             // I'll keep errors as they are critical for debugging broken apps, but remove info.
@@ -73,6 +73,7 @@ class EngineService {
 
             let bestMove = null;
             let score = 0;
+            let timeout;
 
             const handleMsg = (msg) => {
                 const message = typeof msg === 'string' ? msg : msg.data;
@@ -89,6 +90,7 @@ class EngineService {
                 // Parse bestmove: bestmove e2e4
                 if (message.startsWith('bestmove')) {
                     bestMove = message.split(' ')[1];
+                    if (timeout) clearTimeout(timeout);
                     cleanup();
                     resolve({ bestMove, score });
                 }
@@ -97,7 +99,7 @@ class EngineService {
             const cleanup = this.onMessage(handleMsg);
 
             // Timeout safety
-            const timeout = setTimeout(() => {
+            timeout = setTimeout(() => {
                 cleanup();
                 reject(new Error('Analysis timed out'));
             }, 10000);

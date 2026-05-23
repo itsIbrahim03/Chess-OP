@@ -1,10 +1,10 @@
 /* eslint-disable no-restricted-globals */
+/* global importScripts, Stockfish */
 
 // Web Worker - runs Stockfish in a separate thread so chess calculations don't freeze the UI
 // This worker loads the Stockfish WASM binary and handles communication between main thread and engine
 
 let engine = null;
-let isEngineReady = false;
 
 // Load stockfish.js script into the worker context
 try {
@@ -39,10 +39,6 @@ function initStockfish() {
             engine.onmessage = function (message) {
                 // Forward engine output to main thread
                 self.postMessage({ type: 'engine', data: message });
-
-                if (message && message.includes && message.includes('uciok')) {
-                    isEngineReady = true;
-                }
             };
         } else {
             console.warn('Engine created but no onmessage property');

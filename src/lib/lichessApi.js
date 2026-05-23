@@ -43,7 +43,7 @@ class LichessApiService {
         .map((line) => {
           try {
             return JSON.parse(line);
-          } catch (e) {
+          } catch {
             console.error("Failed to parse game line:", line);
             return null;
           }
