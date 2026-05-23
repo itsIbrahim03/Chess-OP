@@ -29,10 +29,38 @@ import {
 } from 'firebase/firestore';
 
 /**
+ * Normalize puzzle field names for backward compatibility.
+ * The gameAnalyzer originally output openingName/tags/playerColor,
+ * but all UI consumers expect opening/theme/userColor.
+ */
+function normalizePuzzle(data, docId) {
+    return {
+        ...data,
+        id: docId,
+        opening: data.opening || data.openingName || 'Unknown Opening',
+        theme: data.theme || (Array.isArray(data.tags) ? data.tags[0] : null) || 'Opening Blunder',
+        userColor: data.userColor || data.playerColor || 'white',
+        playlistIndex: data.playlistIndex !== undefined ? data.playlistIndex : 0
+    };
+}
+
+/**
+ * Get a single puzzle by its Firestore document ID.
+ * Used by Training Arena when loading a specific puzzle from history/favorites.
+ */
+export async function getPuzzleById(puzzleId) {
+    const puzzleRef = doc(db, 'puzzles', puzzleId);
+    const snap = await getDoc(puzzleRef);
+    if (!snap.exists()) return null;
+    return normalizePuzzle(snap.data(), snap.id);
+}
+
+/**
  * Save new puzzles to Firestore with rotation logic
- * - Maximum 60 non-favorite puzzles per user
- * - Deletes oldest puzzles when limit exceeded
- * - Updates rotation count
+ * 
+ * - Enters Playlist 1 (playlistIndex = 0) by default
+ * - Sequentially rotates oldest puzzles to subsequent playlists (max 20 per playlist)
+ * - Deletes oldest puzzles from Playlist 3 if total rotation exceeds 60
  * 
  * @param {string} userId - Firebase Auth UID
  * @param {Array} newPuzzles - Array of puzzle objects from gameAnalyzer
@@ -43,49 +71,35 @@ export async function saveNewPuzzles(userId, newPuzzles) {
         throw new Error('No puzzles to save');
     }
 
-    // 1. Get current rotation count
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
-
-    if (!userSnap.exists()) {
-        throw new Error('User profile not found');
-    }
-
-    const currentCount = userSnap.data()?.rotationCount || 0;
-
-    // 2. Calculate overflow
-    const totalAfter = currentCount + newPuzzles.length;
-    const overflow = Math.max(0, totalAfter - 60);
-
-    // 3. Delete oldest non-favorites if over limit
-    if (overflow > 0) {
-        const toDeleteQuery = query(
-            collection(db, 'puzzles'),
-            where('userId', '==', userId),
-            where('isFavorite', '==', false),
-            orderBy('createdAt', 'asc'),
-            limit(overflow)
-        );
-
-        const toDelete = await getDocs(toDeleteQuery);
-        const deleteBatch = writeBatch(db);
-
-        toDelete.docs.forEach(puzzleDoc => {
-            deleteBatch.delete(puzzleDoc.ref);
-        });
-
-        await deleteBatch.commit();
-    }
-
-    // 4. Save new puzzles
     const saveBatch = writeBatch(db);
 
     newPuzzles.forEach(puzzle => {
         const puzzleRef = doc(collection(db, 'puzzles'));
+        // Strip the custom `id` field from gameAnalyzer — Firestore will assign its own doc ID.
+        // Keeping it would cause all map functions to return the wrong ID.
+        const { id: _customId, ...puzzleData } = puzzle;
+
+        // ── Normalize field names ──────────────────────────────────────
+        const opening = puzzleData.openingName || puzzleData.opening || 'Unknown Opening';
+        const theme = Array.isArray(puzzleData.tags)
+            ? puzzleData.tags[0] || 'Opening Blunder'
+            : (puzzleData.theme || 'Opening Blunder');
+        const userColor = puzzleData.playerColor || puzzleData.userColor || 'white';
+
+        // Remove the raw analyzer fields so we don't store duplicates
+        delete puzzleData.openingName;
+        delete puzzleData.tags;
+        delete puzzleData.playerColor;
+
         saveBatch.set(puzzleRef, {
-            ...puzzle,
+            ...puzzleData,
+            opening,
+            theme,
+            userColor,
+            type: 'opening_blunder',
             userId,
             isFavorite: false,
+            playlistIndex: 0, // Default to Playlist 1
             status: 'new',
             createdAt: serverTimestamp(),
             reviewState: {
@@ -100,16 +114,23 @@ export async function saveNewPuzzles(userId, newPuzzles) {
 
     await saveBatch.commit();
 
-    // 5. Update rotation count and stats
-    const newCount = Math.min(60, currentCount - overflow + newPuzzles.length);
+    // Enforce limits and rotate oldest to next playlists (max 20 each)
+    await enforcePlaylistLimits(userId);
 
+    // Update lastScan and stats in user profile
+    const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {
-        rotationCount: newCount,
         lastScan: serverTimestamp(),
         'stats.totalGamesAnalyzed': increment(1)
     });
 
-    return newCount;
+    // Get final count
+    const finalSnapshot = await getDocs(query(
+        collection(db, 'puzzles'),
+        where('userId', '==', userId),
+        where('isFavorite', '==', false)
+    ));
+    return finalSnapshot.size;
 }
 
 /**
@@ -125,7 +146,7 @@ export async function getRecentPuzzles(userId, limitCount = 20) {
     );
 
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
 }
 
 /**
@@ -146,24 +167,34 @@ export async function getHistoryPuzzles(userId, lastVisibleDoc, limitCount = 20)
 
     const snapshot = await getDocs(q);
     return {
-        puzzles: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })),
+        puzzles: snapshot.docs.map(d => normalizePuzzle(d.data(), d.id)),
         lastDoc: snapshot.docs[snapshot.docs.length - 1]
     };
 }
 
 /**
- * Get favorite puzzles (Vault - Unlimited)
+ * Get favorite puzzles — fetches all user puzzles and filters client-side.
+ * No composite index required.
  */
 export async function getFavoritePuzzles(userId) {
-    const q = query(
-        collection(db, 'puzzles'),
-        where('userId', '==', userId),
-        where('isFavorite', '==', true),
-        orderBy('createdAt', 'desc')
-    );
-
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    try {
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs
+            .map(d => normalizePuzzle(d.data(), d.id))
+            .filter(p => p.isFavorite === true)
+            .sort((a, b) => {
+                const aTime = a.createdAt?.toMillis?.() || 0;
+                const bTime = b.createdAt?.toMillis?.() || 0;
+                return bTime - aTime;
+            });
+    } catch (e) {
+        console.warn('getFavoritePuzzles failed:', e);
+        return [];
+    }
 }
 
 /**
@@ -179,7 +210,7 @@ export async function getPuzzlesByDifficulty(userId, limitCount = 20) {
     );
 
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
 }
 
 /**
@@ -195,76 +226,60 @@ export async function getPuzzlesByStatus(userId, status, limitCount = 20) {
     );
 
     const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
 }
 
-/**
- * Toggle favorite status of a puzzle
- * - Updates puzzle isFavorite field
- * - Updates user rotationCount (favorites don't count toward 60 limit)
- */
 export async function toggleFavorite(userId, puzzleId, isFavorite) {
-    const batch = writeBatch(db);
+    if (isFavorite) {
+        // Enforce maximum 5 favorites limit
+        const favorites = await getFavoritePuzzles(userId);
+        if (favorites.length >= 5) {
+            throw new Error('FAVORITES_LIMIT_EXCEEDED');
+        }
+    }
 
-    // Update puzzle
-    const puzzleRef = doc(db, 'puzzles', puzzleId);
-    batch.update(puzzleRef, { isFavorite });
+    // PRIMARY: Update the puzzle's favorite status — must succeed
+    const puzzleDocRef = doc(db, 'puzzles', puzzleId);
+    await updateDoc(puzzleDocRef, { isFavorite });
 
-    // Update rotation count
-    const userRef = doc(db, 'users', userId);
-    const incrementValue = isFavorite ? -1 : 1; // Favorites free up rotation slots
-    batch.update(userRef, {
-        rotationCount: increment(incrementValue)
-    });
-
-    await batch.commit();
+    // SECONDARY: Update rotation count — non-fatal if it fails
+    const userDocRef = doc(db, 'users', userId);
+    const incrementValue = isFavorite ? -1 : 1;
+    updateDoc(userDocRef, { rotationCount: increment(incrementValue) })
+        .catch(e => console.warn('rotationCount update failed (non-fatal):', e));
 }
 
+
+
 /**
- * Update puzzle review state after attempt
+ * Update puzzle review state after attempt.
+ * Uses setDoc with merge so it works even if the document doesn't exist in cache.
  */
 export async function updatePuzzleReview(userId, puzzleId, success, timeTaken) {
     const puzzleRef = doc(db, 'puzzles', puzzleId);
-    const puzzleSnap = await getDoc(puzzleRef);
 
-    if (!puzzleSnap.exists()) {
-        throw new Error('Puzzle not found');
-    }
-
-    const currentState = puzzleSnap.data().reviewState || {};
-
-    // Update review state
-    const newState = {
-        isSolved: success ? true : currentState.isSolved,
-        attempts: (currentState.attempts || 0) + 1,
-        lastAttempt: serverTimestamp(),
-        successCount: (currentState.successCount || 0) + (success ? 1 : 0),
-        failCount: (currentState.failCount || 0) + (success ? 0 : 1)
-    };
-
-    // Determine new status
-    let newStatus = puzzleSnap.data().status || 'new';
-    if (success && newState.attempts === 1) {
-        newStatus = 'solved';
-    } else if (success && newState.successCount >= 3) {
-        newStatus = 'mastered';
-    } else if (!success && newState.attempts > 0) {
-        newStatus = 'active';
-    }
-
+    // Use updateDoc so we don't create "ghost" documents if the puzzle doesn't exist
     await updateDoc(puzzleRef, {
-        reviewState: newState,
-        status: newStatus
+        'reviewState.isSolved': success ? true : false,
+        'reviewState.attempts': increment(1),
+        'reviewState.lastAttempt': serverTimestamp(),
+        'reviewState.successCount': success ? increment(1) : increment(0),
+        'reviewState.failCount': success ? increment(0) : increment(1),
+        status: success ? 'solved' : 'active',
+        lastAttemptedAt: serverTimestamp(),
+        lastResult: success ? 'success' : 'fail'
     });
 
-    // Log activity (Non-fatal if permissions missing)
+
+    // Log activity (non-fatal)
     try {
         await logPuzzleAttempt(userId, puzzleId, success ? 'success' : 'fail', timeTaken);
     } catch (e) {
-        console.warn("Activities logging failed:", e);
+        console.warn('logPuzzleAttempt failed (non-fatal):', e);
     }
 
-    return { reviewState: newState, status: newStatus };
+    return { status: success ? 'solved' : 'active' };
+
 }
 
 /**
@@ -388,7 +403,7 @@ export async function getNextPuzzle(userId, excludeIds = []) {
     );
 
     let snapshot = await getDocs(q);
-    let candidates = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    let candidates = snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
 
     // Filter out all excluded IDs
     if (excludes.length > 0) {
@@ -409,7 +424,7 @@ export async function getNextPuzzle(userId, excludeIds = []) {
         limit(50)
     );
     snapshot = await getDocs(q);
-    candidates = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    candidates = snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
 
     if (excludes.length > 0) {
         candidates = candidates.filter(p => !excludes.includes(p.id));
@@ -421,4 +436,335 @@ export async function getNextPuzzle(userId, excludeIds = []) {
     }
 
     return null;
+}
+
+/**
+ * Get recent activity logs for the dashboard history section.
+ * Fetches the last N log entries then enriches with puzzle opening/theme.
+ */
+export async function getRecentActivityLogs(userId, limitCount = 10) {
+    try {
+        const q = query(
+            collection(db, 'activity_logs'),
+            where('userId', '==', userId),
+            orderBy('timestamp', 'desc'),
+            limit(limitCount)
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return [];
+
+        const logs = await Promise.all(
+            snapshot.docs.map(async (logDoc) => {
+                const log = { id: logDoc.id, ...logDoc.data() };
+                try {
+                    const puzzleSnap = await getDoc(doc(db, 'puzzles', log.puzzleId));
+                    if (puzzleSnap.exists()) {
+                        const p = puzzleSnap.data();
+                        log.opening = p.opening || p.openingName || 'Unknown Opening';
+                        log.theme = p.theme || (Array.isArray(p.tags) ? p.tags[0] : null) || 'Blunder';
+                    }
+                } catch {
+                    log.opening = 'Unknown Opening';
+                    log.theme = 'Blunder';
+                }
+                return log;
+            })
+        );
+        return logs;
+    } catch (e) {
+        console.warn('getRecentActivityLogs failed:', e);
+        return [];
+    }
+}
+
+export async function getPuzzlesGroupedByOpening(userId) {
+    return getUserPlaylists(userId);
+}
+
+/**
+ * Count puzzles with status === 'new' (unseen) for the banner in Dashboard.
+ */
+export async function getNewPuzzleCount(userId) {
+    try {
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId),
+            where('status', '==', 'new')
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.size;
+    } catch (e) {
+        console.warn('getNewPuzzleCount failed:', e);
+        return 0;
+    }
+}
+
+/**
+ * Get the most recently attempted puzzles for the dashboard history section.
+ * Uses the top-level `lastAttemptedAt` field (no composite index required).
+ *
+ * @param {string} userId
+ * @param {number} limitCount
+ * @returns {Promise<Array>} Array of puzzle objects with lastResult, opening, customName
+ */
+export async function getRecentlyAttemptedPuzzles(userId, limitCount = 5) {
+    try {
+        // Single-field query — no composite index needed
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        return snapshot.docs
+            .map(d => normalizePuzzle(d.data(), d.id))
+            .filter(p => p.lastAttemptedAt != null)
+            .sort((a, b) => {
+                const aTime = a.lastAttemptedAt?.toMillis?.() || 0;
+                const bTime = b.lastAttemptedAt?.toMillis?.() || 0;
+                return bTime - aTime;
+            })
+            .slice(0, limitCount);
+    } catch (e) {
+        console.warn('getRecentlyAttemptedPuzzles failed:', e);
+        return [];
+    }
+}
+
+export async function getAllPuzzlesGroupedByOpening(userId) {
+    return getUserPlaylists(userId);
+}
+
+/**
+ * Rename a puzzle by updating its customName field.
+ */
+export async function renamePuzzle(userId, puzzleId, newName) {
+    const puzzleRef = doc(db, 'puzzles', puzzleId);
+    const snap = await getDoc(puzzleRef);
+    if (!snap.exists()) {
+        throw new Error('Puzzle not found');
+    }
+    if (snap.data().userId !== userId) {
+        throw new Error('Unauthorized to rename this puzzle');
+    }
+    await updateDoc(puzzleRef, { customName: newName.trim() });
+}
+
+/**
+ * Calculate the mean solve rate percentage of the last 3 full attempts at a playlist.
+ * If N is the number of puzzles, we take the last 3 * N attempts.
+ * Purely index-free: queries by userId, filters and sorts client-side.
+ */
+export async function getPlaylistSolveRate(userId, puzzleIds) {
+    try {
+        if (!puzzleIds || puzzleIds.length === 0) return 0;
+        const N = puzzleIds.length;
+        const targetAttemptLimit = N * 3;
+
+        // Fetch logs for this user (index-free query)
+        const q = query(
+            collection(db, 'activity_logs'),
+            where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return 0;
+
+        // Filter and sort client-side
+        const matchingLogs = snapshot.docs
+            .map(d => d.data())
+            .filter(log => puzzleIds.includes(log.puzzleId))
+            .sort((a, b) => {
+                const aTime = a.timestamp?.toMillis?.() || 0;
+                const bTime = b.timestamp?.toMillis?.() || 0;
+                return bTime - aTime;
+            });
+
+        if (matchingLogs.length === 0) return 0;
+
+        // Take the latest 3 * N attempts
+        const latestAttempts = matchingLogs.slice(0, targetAttemptLimit);
+        const successCount = latestAttempts.filter(log => log.result === 'success').length;
+
+        return Math.round((successCount / latestAttempts.length) * 100);
+    } catch (e) {
+        console.warn('getPlaylistSolveRate failed:', e);
+        return 0;
+    }
+}
+
+/**
+ * Get the 3 playlists for the user. Matches names in their profile or defaults to Playlist 1-3.
+ */
+export async function getUserPlaylists(userId) {
+    try {
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        const playlistNames = userSnap.data()?.playlistNames || {};
+
+        const defaultNames = {
+            0: "Playlist 1",
+            1: "Playlist 2",
+            2: "Playlist 3"
+        };
+
+        const names = {
+            0: playlistNames[0] || defaultNames[0],
+            1: playlistNames[1] || defaultNames[1],
+            2: playlistNames[2] || defaultNames[2]
+        };
+
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId),
+            where('isFavorite', '==', false)
+        );
+        const snapshot = await getDocs(q);
+
+        const groups = {
+            0: { playlistIndex: 0, title: names[0], total: 0, solved: 0, mastered: 0, puzzles: [] },
+            1: { playlistIndex: 1, title: names[1], total: 0, solved: 0, mastered: 0, puzzles: [] },
+            2: { playlistIndex: 2, title: names[2], total: 0, solved: 0, mastered: 0, puzzles: [] }
+        };
+
+        snapshot.docs.forEach(d => {
+            const data = d.data();
+            const puzzle = normalizePuzzle(data, d.id);
+            const idx = puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0;
+            const targetIdx = (idx === 0 || idx === 1 || idx === 2) ? idx : 0;
+
+            groups[targetIdx].total++;
+            if (data.reviewState?.isSolved) groups[targetIdx].solved++;
+            if (data.status === 'mastered') groups[targetIdx].mastered++;
+            groups[targetIdx].puzzles.push(puzzle);
+        });
+
+        return [groups[0], groups[1], groups[2]].map(g => {
+            // Sort puzzles newest first
+            g.puzzles.sort((a, b) => {
+                const aTime = a.createdAt?.toMillis?.() || 0;
+                const bTime = b.createdAt?.toMillis?.() || 0;
+                return bTime - aTime;
+            });
+            return {
+                ...g,
+                progress: g.total > 0 ? Math.round((g.solved / g.total) * 100) : 0,
+                mastery: g.mastered >= g.total * 0.8 ? 'Expert'
+                       : g.mastered >= g.total * 0.5 ? 'Advanced'
+                       : g.solved  >= g.total * 0.5 ? 'Intermediate'
+                       : 'Novice'
+            };
+        });
+    } catch (e) {
+        console.error('getUserPlaylists failed:', e);
+        return [];
+    }
+}
+
+/**
+ * Enforce sequential limits (max 20 per playlist) and handles FIFO overflows and deletes.
+ */
+export async function enforcePlaylistLimits(userId) {
+    try {
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId),
+            where('isFavorite', '==', false)
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return;
+
+        const p1 = [];
+        const p2 = [];
+        const p3 = [];
+
+        snapshot.docs.forEach(d => {
+            const data = d.data();
+            const puzzle = { ...data, id: d.id };
+            const idx = data.playlistIndex !== undefined ? data.playlistIndex : 0;
+            if (idx === 0) p1.push(puzzle);
+            else if (idx === 1) p2.push(puzzle);
+            else p3.push(puzzle);
+        });
+
+        const sortByTime = (a, b) => {
+            const aTime = a.createdAt?.toMillis?.() || 0;
+            const bTime = b.createdAt?.toMillis?.() || 0;
+            return bTime - aTime;
+        };
+
+        p1.sort(sortByTime);
+        p2.sort(sortByTime);
+        p3.sort(sortByTime);
+
+        const batch = writeBatch(db);
+        let updated = false;
+
+        // 1. Enforce Playlist 1 limit -> move to Playlist 2
+        if (p1.length > 20) {
+            const overflow = p1.slice(20);
+            overflow.forEach(puzzle => {
+                const puzzleRef = doc(db, 'puzzles', puzzle.id);
+                batch.update(puzzleRef, { playlistIndex: 1 });
+                p2.push({ ...puzzle, playlistIndex: 1 });
+            });
+            p2.sort(sortByTime);
+            updated = true;
+        }
+
+        // 2. Enforce Playlist 2 limit -> move to Playlist 3
+        if (p2.length > 20) {
+            const overflow = p2.slice(20);
+            overflow.forEach(puzzle => {
+                const puzzleRef = doc(db, 'puzzles', puzzle.id);
+                batch.update(puzzleRef, { playlistIndex: 2 });
+                p3.push({ ...puzzle, playlistIndex: 2 });
+            });
+            p3.sort(sortByTime);
+            updated = true;
+        }
+
+        // 3. Enforce Playlist 3 limit -> delete oldest
+        if (p3.length > 20) {
+            const overflow = p3.slice(20);
+            overflow.forEach(puzzle => {
+                const puzzleRef = doc(db, 'puzzles', puzzle.id);
+                batch.delete(puzzleRef);
+            });
+            updated = true;
+        }
+
+        if (updated) {
+            await batch.commit();
+        }
+
+        // Recalculate total non-favorite count
+        const finalSnapshot = await getDocs(query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId),
+            where('isFavorite', '==', false)
+        ));
+        const userRef = doc(db, 'users', userId);
+        await updateDoc(userRef, { rotationCount: finalSnapshot.size });
+
+    } catch (e) {
+        console.error('enforcePlaylistLimits failed:', e);
+    }
+}
+
+/**
+ * Rename one of the 3 playlists
+ */
+export async function renamePlaylist(userId, playlistIndex, newName) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+        [`playlistNames.${playlistIndex}`]: newName.trim()
+    });
+}
+
+/**
+ * Move a puzzle to a target playlist and enforces Limits
+ */
+export async function movePuzzle(userId, puzzleId, targetPlaylistIndex) {
+    const puzzleRef = doc(db, 'puzzles', puzzleId);
+    await updateDoc(puzzleRef, { playlistIndex: targetPlaylistIndex });
+    await enforcePlaylistLimits(userId);
 }
