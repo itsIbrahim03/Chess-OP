@@ -14,8 +14,10 @@ import {
     getDoc,
     setDoc,
     updateDoc,
-    serverTimestamp
+    serverTimestamp,
+    increment
 } from 'firebase/firestore';
+
 
 /**
  * Initialize a new user profile in Firestore
@@ -153,6 +155,74 @@ export async function updateLastActive(userId) {
 
     await updateDoc(userRef, {
         'stats.lastActive': serverTimestamp()
+    });
+}
+
+/**
+ * Update the user's daily login streak on Chess-OP.
+ * - Streak +1 if the user last visited YESTERDAY
+ * - No change if the user already visited TODAY
+ * - Reset to 1 if the user missed a day
+ * Also updates lastActive timestamp.
+ *
+ * @param {string} userId - Firebase Auth UID
+ * @returns {Promise<void>}
+ */
+export async function updateDailyStreak(userId) {
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (!userSnap.exists()) return;
+
+    const data = userSnap.data();
+    const lastActive = data?.stats?.lastActive?.toDate?.();
+    const currentStreak = data?.stats?.streak || 0;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let newStreak = currentStreak;
+    let shouldUpdate = true;
+
+    if (lastActive) {
+        const lastDay = new Date(lastActive);
+        lastDay.setHours(0, 0, 0, 0);
+
+        const diffDays = Math.round((today - lastDay) / (1000 * 60 * 60 * 24));
+
+        if (diffDays === 0) {
+            // Already visited today — no change to streak
+            shouldUpdate = false;
+        } else if (diffDays === 1) {
+            // Visited yesterday — extend streak
+            newStreak = currentStreak + 1;
+        } else {
+            // Missed one or more days — reset streak
+            newStreak = 1;
+        }
+    } else {
+        // First ever visit
+        newStreak = 1;
+    }
+
+    if (shouldUpdate) {
+        await updateDoc(userRef, {
+            'stats.streak': newStreak,
+            'stats.lastActive': serverTimestamp()
+        });
+    }
+}
+
+/**
+ * Increment the user's total puzzles solved counter in Firestore.
+ * Called from TrainingArena every time a puzzle is solved correctly.
+ *
+ * @param {string} userId - Firebase Auth UID
+ * @returns {Promise<void>}
+ */
+export async function incrementTotalSolved(userId) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+        'stats.totalSolved': increment(1)
     });
 }
 

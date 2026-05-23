@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
-import { User, Link2, Bell, Palette, Shield, Save } from 'lucide-react';
+import { User, Link2, Bell, Palette, Shield, Save, Trash2, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getUserProfile, linkLichessAccount, updateUserSettings } from '../services/userService';
+import { db } from '../firebase';
+import {
+    collection, query, where, getDocs, deleteDoc, doc, updateDoc
+} from 'firebase/firestore';
 
 export default function Settings() {
     const { user } = useAuth();
@@ -17,6 +21,8 @@ export default function Settings() {
         notificationsEnabled: true
     });
     const [message, setMessage] = useState({ type: '', text: '' });
+    const [resetting, setResetting] = useState(false);
+    const [resetConfirm, setResetConfirm] = useState(false);
 
     useEffect(() => {
         loadUserProfile();
@@ -68,6 +74,40 @@ export default function Settings() {
         }
     };
 
+    const handleResetPuzzleData = async () => {
+        if (!resetConfirm) {
+            setResetConfirm(true);
+            return;
+        }
+        setResetting(true);
+        setResetConfirm(false);
+        try {
+            // Delete all puzzles owned by this user
+            const puzzlesQ = query(collection(db, 'puzzles'), where('userId', '==', user.uid));
+            const puzzleSnap = await getDocs(puzzlesQ);
+            await Promise.all(puzzleSnap.docs.map(d => deleteDoc(d.ref)));
+
+            // Delete all processed_games owned by this user
+            const gamesQ = query(collection(db, 'processed_games'), where('userId', '==', user.uid));
+            const gamesSnap = await getDocs(gamesQ);
+            await Promise.all(gamesSnap.docs.map(d => deleteDoc(d.ref)));
+
+            // Reset rotation count on user profile
+            await updateDoc(doc(db, 'users', user.uid), { rotationCount: 0 });
+
+            setMessage({
+                type: 'success',
+                text: `Reset complete! Deleted ${puzzleSnap.size} puzzles and ${gamesSnap.size} processed games. Now go to Game Analysis to generate fresh puzzles.`
+            });
+        } catch (e) {
+            console.error('Reset failed:', e);
+            setMessage({ type: 'error', text: `Reset failed: ${e.message}` });
+        } finally {
+            setResetting(false);
+        }
+    };
+
+
     if (loading) {
         return (
             <DashboardLayout>
@@ -77,6 +117,7 @@ export default function Settings() {
             </DashboardLayout>
         );
     }
+
 
     return (
         <DashboardLayout>
@@ -126,7 +167,10 @@ export default function Settings() {
                     )}
 
                     <div className="flex gap-3">
+                        <label htmlFor="lichessUsername" className="sr-only">Lichess Username</label>
                         <input
+                            id="lichessUsername"
+                            name="lichessUsername"
                             type="text"
                             value={lichessUsername}
                             onChange={(e) => setLichessUsername(e.target.value)}
@@ -153,10 +197,12 @@ export default function Settings() {
                     <div className="space-y-4">
                         {/* Min ELO */}
                         <div>
-                            <label className="block text-sm font-bold text-white mb-2">
+                            <label htmlFor="minElo" className="block text-sm font-bold text-white mb-2">
                                 Minimum Rating Filter
                             </label>
                             <input
+                                id="minElo"
+                                name="minElo"
                                 type="number"
                                 value={settings.minElo}
                                 onChange={(e) => setSettings({ ...settings, minElo: parseInt(e.target.value) })}
@@ -240,6 +286,30 @@ export default function Settings() {
                             </p>
                         </div>
                     </div>
+                </div>
+                {/* Data Management Section */}
+                <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-6 mt-6">
+                    <div className="flex items-center gap-3 mb-2">
+                        <Trash2 className="text-red-400" size={24} />
+                        <h2 className="text-xl font-bold text-white">Data Management</h2>
+                    </div>
+                    <p className="text-chess-text-secondary text-sm mb-4">
+                        Reset all your puzzle data. Use this if you are seeing a permission error or if you want to start fresh. This will delete all puzzles and allow you to re-analyze your games.
+                    </p>
+                    {resetConfirm && (
+                        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
+                            <AlertTriangle size={18} className="text-red-400 shrink-0" />
+                            <p className="text-red-400 text-sm">This will delete ALL your puzzles permanently. Click the button again to confirm.</p>
+                        </div>
+                    )}
+                    <button
+                        onClick={handleResetPuzzleData}
+                        disabled={resetting}
+                        className="px-6 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-lg font-bold transition-colors disabled:opacity-50 flex items-center gap-2"
+                    >
+                        <Trash2 size={18} />
+                        {resetting ? 'Resetting...' : resetConfirm ? '⚠️ Confirm Reset — Click Again' : 'Reset All Puzzle Data'}
+                    </button>
                 </div>
             </div>
         </DashboardLayout>

@@ -37,17 +37,8 @@ export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white' 
     const squareSize = boardWidth / 8;
     const isFlipped = orientation === 'black';
 
-    // Generate ranks and files based on orientation
-    const rows = isFlipped ? [7, 6, 5, 4, 3, 2, 1, 0].reverse() : [7, 6, 5, 4, 3, 2, 1, 0]; // 0-7 vs 7-0? 
-    // chess.board() returns logic generic: [0][0] is a8.
-    // We need to render rows 0 to 7. 
-    // If white (default): Ranks 8 -> 1. (Row 0 is Rank 8).
-    // If we map board.map((row, rIndex)) we get Rank 8, 7, 6... which is correct for White orientation.
-
     const renderedRows = isFlipped ? [...board].reverse() : board;
-    // If flipped (Black bottom), we want Rank 1 at top? No, Rank 1 at bottom.
-    // Standard: Rank 8 top. 
-    // Flipped: Rank 1 top. 
+    // If flipped (Black bottom), we want Rank 1 at bottom.
     // board[0] is Rank 8. board[7] is Rank 1.
     // So if flipped, we want board[7] rendered first.
 
@@ -72,10 +63,8 @@ export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white' 
                 // Flipped (Black): h1 (7,7) is Top-Left.
 
                 const currentRow = isFlipped ? [...row].reverse() : row;
-                const actualRowIndex = isFlipped ? 7 - rIndex : rIndex;
 
                 return currentRow.map((piece, cIndex) => {
-                    const actualColIndex = isFlipped ? 7 - cIndex : cIndex;
 
                     // Color logic: (row + col) % 2 === 0 ? Light : Dark?
                     // a8 (0,0) is Light. 0+0=0. Correct.

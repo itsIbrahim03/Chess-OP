@@ -160,7 +160,10 @@ export default function DashboardLayout({ children }) {
                     <div className="flex items-center gap-6">
                         <div className="relative hidden md:block">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-chess-text-secondary" size={18} />
+                            <label htmlFor="sidebarSearch" className="sr-only">Search openings, players</label>
                             <input
+                                id="sidebarSearch"
+                                name="sidebarSearch"
                                 type="text"
                                 placeholder="Search openings, players..."
                                 className="bg-chess-panel border border-white/10 rounded-full py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-chess-accent w-64 transition-all text-white placeholder:text-chess-text-secondary"

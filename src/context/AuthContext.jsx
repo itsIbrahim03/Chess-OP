@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { auth, googleProvider } from "../firebase";
 import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
-import { initializeUserProfile } from '../services/userService';
+import { initializeUserProfile, updateDailyStreak } from '../services/userService';
+
 
 // Context API - allows sharing user state across the entire app without prop drilling
 const AuthContext = createContext({});
@@ -23,10 +24,13 @@ export const AuthProvider = ({ children }) => {
       if (currentUser) {
         try {
           await initializeUserProfile(currentUser);
+          // Update Chess-OP daily visit streak (non-fatal)
+          updateDailyStreak(currentUser.uid).catch(() => {});
         } catch (error) {
           console.error('Failed to initialize user profile:', error);
         }
       }
+
 
       setLoading(false);
     });
@@ -42,4 +46,5 @@ export const AuthProvider = ({ children }) => {
 };
 
 // Custom hook to access auth context in any component
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);
