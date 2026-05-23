@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
@@ -18,11 +18,65 @@ export default function ChessgroundTest() {
     const chessRef = useRef(new Chess());
 
     const [orientation, setOrientation] = useState('white');
-    const [lastMove, setLastMove] = useState(null);
     const [status, setStatus] = useState('Ready - Make a move!');
     const [moveHistory, setMoveHistory] = useState([]);
-    const [arrowsEnabled, setArrowsEnabled] = useState(true);
-    const [premoveEnabled, setPremoveEnabled] = useState(true);
+    const [arrowsEnabled] = useState(true);
+    const [premoveEnabled] = useState(true);
+    const [turn, setTurn] = useState('w');
+
+    // Get legal moves in chessground format
+    const getLegalMoves = useCallback(() => {
+        const dests = new Map();
+        const moves = chessRef.current.moves({ verbose: true });
+
+        moves.forEach(move => {
+            const from = move.from;
+            const to = move.to;
+
+            if (!dests.has(from)) {
+                dests.set(from, []);
+            }
+            dests.get(from).push(to);
+        });
+
+        return dests;
+    }, []);
+
+    // Handle move
+    const onMove = useCallback((from, to) => {
+        try {
+            const move = chessRef.current.move({ from, to, promotion: 'q' });
+
+            if (move) {
+                setMoveHistory(prev => [...prev, move.san]);
+
+                // Update status
+                if (chessRef.current.isCheckmate()) {
+                    setStatus('♚ Checkmate!');
+                } else if (chessRef.current.isDraw()) {
+                    setStatus('½ Draw');
+                } else if (chessRef.current.isCheck()) {
+                    setStatus('✓ Check!');
+                } else {
+                    setStatus(`Last move: ${move.san}`);
+                }
+
+                setTurn(chessRef.current.turn());
+
+                // Update board for next move
+                cgRef.current.set({
+                    fen: chessRef.current.fen(),
+                    turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
+                    movable: {
+                        dests: getLegalMoves()
+                    },
+                    lastMove: [from, to]
+                });
+            }
+        } catch (e) {
+            console.error('Invalid move:', e);
+        }
+    }, [getLegalMoves]);
 
     // Initialize chessground
     useEffect(() => {
@@ -68,7 +122,7 @@ export default function ChessgroundTest() {
                 }
             });
         }
-    }, []);
+    }, [arrowsEnabled, getLegalMoves, onMove, orientation, premoveEnabled]);
 
     // Update board when orientation changes
     useEffect(() => {
@@ -77,65 +131,12 @@ export default function ChessgroundTest() {
         }
     }, [orientation]);
 
-    // Get legal moves in chessground format
-    function getLegalMoves() {
-        const dests = new Map();
-        const moves = chessRef.current.moves({ verbose: true });
-
-        moves.forEach(move => {
-            const from = move.from;
-            const to = move.to;
-
-            if (!dests.has(from)) {
-                dests.set(from, []);
-            }
-            dests.get(from).push(to);
-        });
-
-        return dests;
-    }
-
-    // Handle move
-    function onMove(from, to) {
-        try {
-            const move = chessRef.current.move({ from, to, promotion: 'q' });
-
-            if (move) {
-                setLastMove([from, to]);
-                setMoveHistory(prev => [...prev, move.san]);
-
-                // Update status
-                if (chessRef.current.isCheckmate()) {
-                    setStatus('♚ Checkmate!');
-                } else if (chessRef.current.isDraw()) {
-                    setStatus('½ Draw');
-                } else if (chessRef.current.isCheck()) {
-                    setStatus('✓ Check!');
-                } else {
-                    setStatus(`Last move: ${move.san}`);
-                }
-
-                // Update board for next move
-                cgRef.current.set({
-                    fen: chessRef.current.fen(),
-                    turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
-                    movable: {
-                        dests: getLegalMoves()
-                    },
-                    lastMove: [from, to]
-                });
-            }
-        } catch (e) {
-            console.error('Invalid move:', e);
-        }
-    }
-
     // Reset board
     function resetBoard() {
         chessRef.current.reset();
         setMoveHistory([]);
-        setLastMove(null);
         setStatus('Ready - Make a move!');
+        setTurn('w');
 
         cgRef.current.set({
             fen: chessRef.current.fen(),
@@ -171,6 +172,7 @@ export default function ChessgroundTest() {
         chessRef.current.load(puzzleFen);
         setMoveHistory([]);
         setStatus('♟️ Puzzle: White to move and win!');
+        setTurn('w');
 
         cgRef.current.set({
             fen: puzzleFen,
@@ -215,7 +217,7 @@ export default function ChessgroundTest() {
                             <div className="mt-4 text-center">
                                 <p className="text-lg text-white font-medium">{status}</p>
                                 <p className="text-sm text-chess-text-secondary mt-1">
-                                    Orientation: {orientation} | Turn: {chessRef.current.turn() === 'w' ? 'White' : 'Black'}
+                                    Orientation: {orientation} | Turn: {turn === 'w' ? 'White' : 'Black'}
                                 </p>
                             </div>
                         </div>

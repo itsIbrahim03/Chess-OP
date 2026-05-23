@@ -2,9 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
-import { ArrowRight, RotateCw, Target, CheckCircle2, XCircle } from 'lucide-react';
+import { ArrowRight, Target, CheckCircle2, XCircle, Star } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getNextPuzzle, updatePuzzleReview } from '../services/puzzleService';
+import {
+    getNextPuzzle,
+    getPuzzleById,
+    updatePuzzleReview,
+    toggleFavorite
+} from '../services/puzzleService';
+import { incrementTotalSolved } from '../services/userService';
 
 // Import chessground CSS
 import 'chessground/assets/chessground.base.css';
@@ -16,88 +22,113 @@ export default function TrainingArena() {
     const boardRef = useRef(null);
     const cgRef = useRef(null);
     const chessRef = useRef(new Chess());
-
-    // Use Ref to hold current puzzle to avoid stale closures in Chessground callbacks
     const puzzleRef = useRef(null);
 
     const [currentPuzzle, setCurrentPuzzle] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [status, setStatus] = useState('active'); // active, success, failure
+    const [status, setStatus] = useState('active');
     const [orientation, setOrientation] = useState('white');
     const [stats, setStats] = useState({ solved: 0, streak: 0 });
-
-    // Track seen puzzles in this session to ensure full rotation (Deck Shuffle)
+    const [isFavorited, setIsFavorited] = useState(false);
+    const [favoriteLoading, setFavoriteLoading] = useState(false);
+    const [toastError, setToastError] = useState(null);
     const [seenPuzzleIds, setSeenPuzzleIds] = useState([]);
 
-    // Sync state to Ref
+    // Sync state to ref (avoids stale closures in Chessground callbacks)
     useEffect(() => {
         puzzleRef.current = currentPuzzle;
+        setIsFavorited(currentPuzzle?.isFavorite ?? false);
     }, [currentPuzzle]);
 
-    // Load first puzzle on mount
+    // ─── On Mount: check for ?puzzleId= in URL ──────────────────────────────
     useEffect(() => {
-        loadNextPuzzle();
+        if (!user) return;
+        // Read DIRECTLY from window.location so we always get the real URL,
+        // not React's potentially-stale searchParams state.
+        const params = new URLSearchParams(window.location.search);
+        const specificId = params.get('puzzleId');
+
+        if (specificId) {
+            loadSpecificPuzzle(specificId);
+        } else {
+            loadNextPuzzle();
+        }
     }, [user]);
 
-    async function loadNextPuzzle(retry = false) {
-        if (!user) return;
+    // ─── Load a specific puzzle by Firestore document ID ────────────────────
+    async function loadSpecificPuzzle(puzzleId) {
         setLoading(true);
         setStatus('active');
-
         try {
-            // Pass array of all seen IDs to exclude them
-            // If retry is true, we cleared the list, so pass empty
-            const excludeIds = retry ? [] : seenPuzzleIds;
-
-            const puzzle = await getNextPuzzle(user.uid, excludeIds);
-
+            const puzzle = await getPuzzleById(puzzleId);
             if (puzzle) {
-                // Ensure we use the correct field for color
-                const pColor = puzzle.playerColor || puzzle.color || 'white';
-                const normalizedPuzzle = { ...puzzle, color: pColor };
-
-                setCurrentPuzzle(normalizedPuzzle);
-                setOrientation(pColor);
-
-                // Add to seen list
-                if (!retry) {
-                    setSeenPuzzleIds(prev => [...prev, puzzle.id]);
-                } else {
-                    // If retrying (reset), start new list
-                    setSeenPuzzleIds([puzzle.id]);
-                }
-
-                // Initialize internal chess logic with puzzle FEN
-                chessRef.current.load(normalizedPuzzle.fen);
-
-                if (cgRef.current) {
-                    configureBoard(normalizedPuzzle);
+                const success = applyPuzzle(puzzle);
+                if (!success) {
+                    await loadNextPuzzle();
                 }
             } else {
-                // No puzzles found excluding the seen ones? 
-                if (seenPuzzleIds.length > 0 && !retry) {
-                    // We've seen them all! Reset the cycle.
-                    console.log("[Arena] All puzzles seen. Resuffling deck.");
-                    setSeenPuzzleIds([]);
-                    // Recursively call with retry=true (which uses empty exclude list)
-                    await loadNextPuzzle(true);
-                } else {
-                    console.log("[Arena] No puzzles found at all.");
-                }
+                console.warn('Specific puzzle not found, falling back to next puzzle');
+                await loadNextPuzzle();
             }
-        } catch (error) {
-            console.error("Failed to load puzzle:", error);
+
+        } catch (e) {
+            console.error('loadSpecificPuzzle failed:', e);
+            await loadNextPuzzle();
         } finally {
             setLoading(false);
         }
     }
 
-    // Initialize/Reconfigure board
+    // ─── Load next puzzle in rotation ───────────────────────────────────────
+    async function loadNextPuzzle(retry = false) {
+        if (!user) return;
+        setLoading(true);
+        setStatus('active');
+        try {
+            const excludeIds = retry ? [] : seenPuzzleIds;
+            const puzzle = await getNextPuzzle(user.uid, excludeIds);
+
+            if (puzzle) {
+                applyPuzzle(puzzle);
+                if (!retry) {
+                    setSeenPuzzleIds(prev => [...prev, puzzle.id]);
+                } else {
+                    setSeenPuzzleIds([puzzle.id]);
+                }
+            } else {
+                if (seenPuzzleIds.length > 0 && !retry) {
+                    setSeenPuzzleIds([]);
+                    await loadNextPuzzle(true);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load puzzle:', error);
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    // ─── Shared: set puzzle state + chess engine ─────────────────────────────
+    function applyPuzzle(puzzle) {
+        if (!puzzle.fen) {
+            console.error('Puzzle data is incomplete (missing FEN):', puzzle);
+            setToastError('Incomplete puzzle data found. Please use "Reset All Puzzle Data" in Settings and re-analyze.');
+            return false;
+        }
+        const pColor = puzzle.playerColor || puzzle.color || 'white';
+        const normalized = { ...puzzle, color: pColor };
+        setCurrentPuzzle(normalized);
+        setOrientation(pColor);
+        chessRef.current.load(normalized.fen);
+        return true;
+    }
+
+
+    // ─── Board: initialize or reconfigure when puzzle changes ───────────────
     useEffect(() => {
         if (!boardRef.current || !currentPuzzle) return;
 
         if (!cgRef.current) {
-            // First initialization
             cgRef.current = Chessground(boardRef.current, {
                 fen: currentPuzzle.fen,
                 orientation: orientation,
@@ -114,7 +145,7 @@ export default function TrainingArena() {
         } else {
             configureBoard(currentPuzzle);
         }
-    }, [currentPuzzle, orientation]);
+    }, [currentPuzzle?.id, orientation]); // Only reconfigure on new puzzle, not on metadata changes like isFavorite
 
     function configureBoard(puzzle) {
         cgRef.current.set({
@@ -126,7 +157,7 @@ export default function TrainingArena() {
                 color: puzzle.color,
                 dests: getLegalMoves()
             },
-            drawable: { shapes: [] } // Clear arrows
+            drawable: { shapes: [] }
         });
     }
 
@@ -140,78 +171,78 @@ export default function TrainingArena() {
     }
 
     async function onMove(from, to) {
-        // ALWAYS use the Ref to get the latest puzzle state
         const puzzle = puzzleRef.current;
         if (!puzzle) return;
 
-        // 1. Check for promotion (auto-queen for simplicity)
         const moves = chessRef.current.moves({ verbose: true });
         const isPromotion = moves.some(m => m.from === from && m.to === to && m.promotion);
-
-        // Construct UCI move for comparison
         const uciMove = from + to + (isPromotion ? 'q' : '');
-
-        // 2. Validate against solution
         const isCorrect = uciMove === puzzle.correctMove;
 
         if (isCorrect) {
-            // --- SUCCESS ---
             setStatus('success');
-
-            // Execute move on internal logic
             chessRef.current.move({ from, to, promotion: 'q' });
-
-            // Freeze board
             cgRef.current.set({
                 fen: chessRef.current.fen(),
                 movable: { color: null, dests: new Map() }
             });
+            setStats(prev => ({ solved: prev.solved + 1, streak: prev.streak + 1 }));
 
-            // Update Stats
-            setStats(prev => ({
-                solved: prev.solved + 1,
-                streak: prev.streak + 1
-            }));
+            try { await updatePuzzleReview(user.uid, puzzle.id, true, 0); }
+            catch (e) { console.warn('updatePuzzleReview failed:', e); }
 
-            // Save (Suppress errors if permissions fail)
-            try {
-                await updatePuzzleReview(user.uid, puzzle.id, true, 0);
-            } catch (e) { }
+            try { await incrementTotalSolved(user.uid); }
+            catch (e) { console.warn('incrementTotalSolved failed:', e); }
 
         } else {
-            // --- FAILURE ---
             setStatus('failure');
-
-            // Reset Streak
             setStats(prev => ({ ...prev, streak: 0 }));
 
-            // Show Critical Feedback
             const bestMoveFrom = puzzle.correctMove.substring(0, 2);
             const bestMoveTo = puzzle.correctMove.substring(2, 4);
-
             cgRef.current.setShapes([
-                { orig: from, dest: to, brush: 'red' },       // User's bad move
-                { orig: bestMoveFrom, dest: bestMoveTo, brush: 'green' } // The correct move
+                { orig: from, dest: to, brush: 'red' },
+                { orig: bestMoveFrom, dest: bestMoveTo, brush: 'green' }
             ]);
 
-            // Save (Suppress errors)
-            try {
-                await updatePuzzleReview(user.uid, puzzle.id, false, 0);
-            } catch (e) { }
+            try { await updatePuzzleReview(user.uid, puzzle.id, false, 0); }
+            catch (e) { console.warn('updatePuzzleReview failed:', e); }
 
-            // Snap back after delay
             setTimeout(() => {
                 cgRef.current.set({
                     fen: puzzle.fen,
                     turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
-                    movable: {
-                        color: puzzle.color,
-                        dests: getLegalMoves()
-                    },
+                    movable: { color: puzzle.color, dests: getLegalMoves() },
                     drawable: { shapes: [] }
                 });
                 setStatus('active');
             }, 1500);
+        }
+    }
+
+    async function handleToggleFavorite() {
+        const puzzle = puzzleRef.current;
+        if (!puzzle || favoriteLoading) return;
+
+        setFavoriteLoading(true);
+        const newFavState = !isFavorited;
+        setIsFavorited(newFavState);
+        setToastError(null);
+
+        try {
+            await toggleFavorite(user.uid, puzzle.id, newFavState);
+            // Do NOT call setCurrentPuzzle here — it would re-trigger the board useEffect
+            // and reset the board position. isFavorited state already handles the UI.
+
+        } catch (e) {
+            console.error('toggleFavorite failed:', e.code, e.message);
+            setIsFavorited(!newFavState);
+            setToastError(e.code === 'permission-denied'
+                ? 'Permission denied — check your Firestore rules.'
+                : `Star failed: ${e.message}`);
+            setTimeout(() => setToastError(null), 5000);
+        } finally {
+            setFavoriteLoading(false);
         }
     }
 
@@ -230,29 +261,59 @@ export default function TrainingArena() {
                 {/* Sidebar Column */}
                 <div className="w-full lg:w-96 flex flex-col gap-4">
 
+                    {/* Toast Error */}
+                    {toastError && (
+                        <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3 rounded-xl flex items-start gap-2">
+                            <span className="shrink-0 mt-0.5">⚠️</span>
+                            <span>{toastError}</span>
+                        </div>
+                    )}
+
                     {/* Status Card */}
                     <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl flex-1 flex flex-col items-center justify-center text-center space-y-4">
                         {loading ? (
                             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-chess-accent"></div>
                         ) : currentPuzzle ? (
                             <>
-                                <h2 className="text-2xl font-bold text-white">
+                                {/* Puzzle name + favorite button */}
+                                <div className="w-full flex items-start justify-between">
+                                    <div className="text-left">
+                                        <p className="text-chess-text-secondary text-xs uppercase tracking-widest mb-1">Current Puzzle</p>
+                                        <p className="text-white font-bold text-sm truncate max-w-[220px]">
+                                            {currentPuzzle.customName || currentPuzzle.opening || 'Opening Puzzle'}
+                                        </p>
+                                    </div>
+                                    {/* Star / Favorite Button */}
+                                    <button
+                                        onClick={handleToggleFavorite}
+                                        disabled={favoriteLoading}
+                                        title={isFavorited ? 'Remove from Favorites' : 'Add to Favorites'}
+                                        className={`p-2 rounded-lg transition-all ${
+                                            isFavorited
+                                                ? 'text-yellow-400 bg-yellow-400/10 hover:bg-yellow-400/20'
+                                                : 'text-chess-text-secondary hover:text-yellow-400 hover:bg-yellow-400/10'
+                                        } ${favoriteLoading ? 'opacity-50 cursor-wait' : ''}`}
+                                    >
+                                        <Star size={22} fill={isFavorited ? 'currentColor' : 'none'} />
+                                    </button>
+                                </div>
+
+                                <h2 className="text-2xl font-bold text-white w-full text-center">
                                     {status === 'active' && 'Solve this!'}
-                                    {status === 'success' && <span className="text-green-400 flex items-center gap-2"><CheckCircle2 /> Correct!</span>}
-                                    {status === 'failure' && <span className="text-red-400 flex items-center gap-2"><XCircle /> Incorrect</span>}
+                                    {status === 'success' && <span className="text-green-400 flex items-center justify-center gap-2"><CheckCircle2 /> Correct!</span>}
+                                    {status === 'failure' && <span className="text-red-400 flex items-center justify-center gap-2"><XCircle /> Incorrect</span>}
                                 </h2>
 
                                 <p className="text-chess-text-secondary">
                                     {currentPuzzle.rating ? `Rating: ${currentPuzzle.rating}` : 'Unrated Puzzle'}
                                 </p>
 
-                                <div className="pt-8 w-full">
+                                <div className="pt-4 w-full">
                                     <button
                                         onClick={() => loadNextPuzzle(false)}
                                         className="w-full py-4 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
                                     >
-                                        <ArrowRight />
-                                        Next Puzzle
+                                        <ArrowRight /> Next Puzzle
                                     </button>
                                 </div>
                             </>
