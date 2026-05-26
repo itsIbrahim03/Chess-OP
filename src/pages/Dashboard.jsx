@@ -10,7 +10,8 @@ import {
 import { getUserProfile } from '../services/userService';
 import {
   getUserPuzzleStats,
-  getPuzzlesGroupedByOpening,
+  getUserPlaylists,
+  getPlaylistRecentStats,
   getRecentlyAttemptedPuzzles,
   getFavoritePuzzles,
   getNewPuzzleCount
@@ -43,6 +44,7 @@ export default function Dashboard() {
   const [userProfile, setUserProfile] = useState(null);
   const [puzzleStats, setPuzzleStats] = useState(null);
   const [playlists, setPlaylists] = useState([]);
+  const [solveRates, setSolveRates] = useState({});
   const [history, setHistory] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [newCount, setNewCount] = useState(0);
@@ -73,13 +75,25 @@ export default function Dashboard() {
 
     // Load remaining data independently — errors are non-fatal
     const [groups, logs, favs, count] = await Promise.allSettled([
-      getPuzzlesGroupedByOpening(user.uid, 4),
+      getUserPlaylists(user.uid),
       getRecentlyAttemptedPuzzles(user.uid, 5),
       getFavoritePuzzles(user.uid),
       getNewPuzzleCount(user.uid),
     ]);
 
-    if (groups.status === 'fulfilled') setPlaylists(groups.value);
+    if (groups.status === 'fulfilled') {
+      const loadedPlaylists = groups.value;
+      setPlaylists(loadedPlaylists);
+      // Load recent success rates (last 5 attempts) in parallel
+      loadedPlaylists.forEach(async (group) => {
+        const puzzleIds = group.puzzles.map(p => p.id);
+        const stats = await getPlaylistRecentStats(user.uid, puzzleIds);
+        setSolveRates(prev => ({
+          ...prev,
+          [group.playlistIndex]: stats
+        }));
+      });
+    }
     if (logs.status === 'fulfilled') setHistory(logs.value);
     if (favs.status === 'fulfilled') setFavorites(favs.value.slice(0, 3));
     if (count.status === 'fulfilled') setNewCount(count.value);
@@ -205,63 +219,114 @@ export default function Dashboard() {
                   <div key={i} className="bg-chess-panel border border-white/5 p-5 rounded-xl animate-pulse h-36" />
                 ))}
               </div>
-            ) : playlists.length === 0 ? (
-              /* Empty State */
-              <div className="bg-chess-panel border border-dashed border-white/10 rounded-xl p-10 text-center">
-                <BookOpen size={40} className="text-chess-text-secondary mx-auto mb-3 opacity-50" />
-                <p className="text-white font-medium mb-1">No playlists yet</p>
-                <p className="text-chess-text-secondary text-sm mb-4">Analyze your games to generate your first puzzle set.</p>
-                <button
-                  onClick={() => navigate('/dashboard/analyze')}
-                  className="bg-chess-accent text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-chess-accent/90 transition-colors"
-                >
-                  Analyze My Games
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {playlists.map((pl, i) => (
-                  <div
-                    key={i}
-                    onClick={() => navigate('/dashboard/repertoire')}
-                    className="bg-chess-panel border border-white/5 p-5 rounded-xl hover:border-chess-accent/50 transition-all cursor-pointer group hover:-translate-y-0.5"
-                  >
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="w-10 h-10 bg-chess-accent/10 rounded-lg flex items-center justify-center text-chess-accent">
-                        <BookOpen size={20} />
-                      </div>
-                      <span className={`text-xs font-semibold px-2 py-1 rounded-full ${masteryColor[pl.mastery] ?? masteryColor.Novice}`}>
-                        {pl.mastery}
-                      </span>
-                    </div>
-                    <h3 className="text-white font-bold mb-1 group-hover:text-chess-accent transition-colors truncate" title={pl.title}>
-                      {pl.title}
-                    </h3>
-                    <p className="text-sm text-chess-text-secondary mb-4">
-                      {pl.total} puzzle{pl.total !== 1 ? 's' : ''} · {pl.solved} solved
-                    </p>
-                    <div className="w-full bg-black/20 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className="bg-chess-accent h-full rounded-full transition-all duration-700"
-                        style={{ width: `${pl.progress}%` }}
-                      />
-                    </div>
-                    <p className="text-xs text-chess-text-secondary mt-1 text-right">{pl.progress}%</p>
+            ) : (() => {
+              const activePlaylists = playlists.filter(pl => pl.total > 0);
+              if (activePlaylists.length === 0) {
+                return (
+                  /* Empty State */
+                  <div className="bg-chess-panel border border-dashed border-white/10 rounded-xl p-10 text-center">
+                    <BookOpen size={40} className="text-chess-text-secondary mx-auto mb-3 opacity-50" />
+                    <p className="text-white font-medium mb-1">No playlists yet</p>
+                    <p className="text-chess-text-secondary text-sm mb-4">Analyze your games to generate your first puzzle set.</p>
+                    <button
+                      onClick={() => navigate('/dashboard/analyze')}
+                      className="bg-chess-accent text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-chess-accent/90 transition-colors"
+                    >
+                      Analyze My Games
+                    </button>
                   </div>
-                ))}
+                );
+              }
 
-                {/* Add more CTA if space */}
-                {playlists.length < 4 && (
-                  <div
-                    onClick={() => navigate('/dashboard/analyze')}
-                    className="border border-dashed border-white/10 p-5 rounded-xl flex flex-col items-center justify-center text-chess-text-secondary hover:border-chess-accent/50 hover:text-chess-accent transition-colors cursor-pointer min-h-[160px]"
-                  >
-                    <Plus size={32} className="mb-2" />
-                    <span className="font-medium text-sm">Analyze More Games</span>
+              const gridClass = activePlaylists.length === 1
+                ? "grid grid-cols-1 gap-6"
+                : activePlaylists.length === 2
+                  ? "grid grid-cols-1 sm:grid-cols-2 gap-6"
+                  : "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6";
+
+              // SVG Circular Gauge Helper
+              const CircularGauge = ({ percentage, color = 'stroke-chess-accent', title, subtitle }) => {
+                const radius = 38;
+                const circumference = 2 * Math.PI * radius;
+                const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+                return (
+                  <div className="flex flex-col items-center gap-1 shrink-0" title={title}>
+                    <div className="relative w-24 h-24 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90">
+                        <circle
+                          cx="48"
+                          cy="48"
+                          r={radius}
+                          className="stroke-white/5 fill-transparent"
+                          strokeWidth="5"
+                        />
+                        <circle
+                          cx="48"
+                          cy="48"
+                          r={radius}
+                          className={`fill-transparent transition-all duration-1000 ${color}`}
+                          strokeWidth="5"
+                          strokeDasharray={circumference}
+                          strokeDashoffset={strokeDashoffset}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <span className="absolute text-lg font-bold text-white">{percentage}%</span>
+                    </div>
+                    <span className="text-[10px] uppercase font-bold text-chess-text-secondary tracking-wider mt-1.5">{title}</span>
+                    {subtitle && <span className="text-[9px] text-chess-text-secondary opacity-70 font-semibold">{subtitle}</span>}
                   </div>
-                )}
-              </div>
-            )}
+                );
+              };
+
+              return (
+                <div className={gridClass}>
+                  {activePlaylists.map((pl, i) => {
+                    const rateStats = solveRates[pl.playlistIndex] || { percentage: 0, successCount: 0, totalCount: 0 };
+
+                    return (
+                      <div
+                        key={i}
+                        className="bg-chess-panel border border-white/5 p-6 rounded-2xl transition-all duration-500 ease-out transform hover:-translate-y-1 hover:border-chess-accent/40 hover:shadow-[0_10px_25px_-5px_rgba(235,94,85,0.15)] flex items-center justify-between h-[160px] relative overflow-hidden group select-none"
+                      >
+                        {/* Background subtle glowing circle on hover */}
+                        <div className="absolute -right-8 -bottom-8 w-24 h-24 rounded-full bg-chess-accent/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+
+                        {/* Left side: Metadata and Manage action button */}
+                        <div className="flex flex-col justify-between h-full py-1 min-w-0 flex-1 mr-4">
+                          <div>
+                            <h3 className="text-white font-bold text-lg mb-1 truncate" title={pl.title}>
+                              {pl.title}
+                            </h3>
+                            <p className="text-xs text-chess-text-secondary">
+                              {pl.total} puzzles
+                            </p>
+                          </div>
+
+                          <button
+                            onClick={() => navigate('/dashboard/repertoire')}
+                            className="bg-white/5 hover:bg-chess-accent hover:text-white text-chess-text-secondary hover:shadow-inner text-xs px-3.5 py-2 rounded-xl transition-all duration-300 font-semibold flex items-center gap-1 w-fit"
+                          >
+                            Manage <ArrowRight size={12} />
+                          </button>
+                        </div>
+
+                        {/* Right side: Large Mastery circular gauge */}
+                        <div className="shrink-0 flex items-center justify-center">
+                          <CircularGauge
+                            percentage={pl.progress}
+                            color="stroke-chess-accent"
+                            title="Mastery"
+                            subtitle={`${pl.solved}/${pl.total} Solved`}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </section>
 
           {/* Recent History */}
@@ -357,7 +422,7 @@ export default function Dashboard() {
                           {puzzle.customName || puzzle.opening || 'Favorite Puzzle'}
                         </p>
                         <p className="text-xs text-chess-text-secondary mt-0.5">
-                          {puzzle.theme || 'Opening Blunder'} · {puzzle.status}
+                          {puzzle.status}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
