@@ -25,7 +25,8 @@ import {
     limit,
     startAfter,
     serverTimestamp,
-    increment
+    increment,
+    deleteField
 } from 'firebase/firestore';
 
 /**
@@ -231,9 +232,9 @@ export async function getPuzzlesByStatus(userId, status, limitCount = 20) {
 
 export async function toggleFavorite(userId, puzzleId, isFavorite) {
     if (isFavorite) {
-        // Enforce maximum 5 favorites limit
+        // Enforce maximum 10 favorites limit
         const favorites = await getFavoritePuzzles(userId);
-        if (favorites.length >= 5) {
+        if (favorites.length >= 10) {
             throw new Error('FAVORITES_LIMIT_EXCEEDED');
         }
     }
@@ -478,7 +479,58 @@ export async function getRecentActivityLogs(userId, limitCount = 10) {
 }
 
 export async function getPuzzlesGroupedByOpening(userId) {
-    return getUserPlaylists(userId);
+    try {
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return [];
+
+        const openingGroups = {};
+
+        snapshot.docs.forEach(d => {
+            const data = d.data();
+            const puzzle = normalizePuzzle(data, d.id);
+            const opening = puzzle.opening || 'Unknown Opening';
+            
+            if (!openingGroups[opening]) {
+                openingGroups[opening] = {
+                    playlistIndex: opening, // use opening title as the identifier
+                    title: opening,
+                    total: 0,
+                    solved: 0,
+                    mastered: 0,
+                    puzzles: []
+                };
+            }
+            const group = openingGroups[opening];
+            group.total++;
+            if (data.reviewState?.isSolved) group.solved++;
+            if (data.status === 'mastered') group.mastered++;
+            group.puzzles.push(puzzle);
+        });
+
+        // Convert to array and sort by total puzzles descending
+        return Object.values(openingGroups).map(g => {
+            g.puzzles.sort((a, b) => {
+                const aTime = a.createdAt?.toMillis?.() || 0;
+                const bTime = b.createdAt?.toMillis?.() || 0;
+                return bTime - aTime;
+            });
+            return {
+                ...g,
+                progress: g.total > 0 ? Math.round((g.solved / g.total) * 100) : 0,
+                mastery: g.mastered >= g.total * 0.8 ? 'Expert'
+                       : g.mastered >= g.total * 0.5 ? 'Advanced'
+                       : g.solved  >= g.total * 0.5 ? 'Intermediate'
+                       : 'Novice'
+            };
+        }).sort((a, b) => b.total - a.total);
+    } catch (e) {
+        console.error('getPuzzlesGroupedByOpening failed:', e);
+        return [];
+    }
 }
 
 /**
@@ -531,7 +583,7 @@ export async function getRecentlyAttemptedPuzzles(userId, limitCount = 5) {
 }
 
 export async function getAllPuzzlesGroupedByOpening(userId) {
-    return getUserPlaylists(userId);
+    return getPuzzlesGroupedByOpening(userId);
 }
 
 /**
@@ -600,36 +652,44 @@ export async function getUserPlaylists(userId) {
         const userSnap = await getDoc(userRef);
         const playlistNames = userSnap.data()?.playlistNames || {};
 
-        const defaultNames = {
-            0: "Playlist 1",
-            1: "Playlist 2",
-            2: "Playlist 3"
-        };
+        const groups = {};
 
-        const names = {
-            0: playlistNames[0] || defaultNames[0],
-            1: playlistNames[1] || defaultNames[1],
-            2: playlistNames[2] || defaultNames[2]
-        };
+        // 1. Populate custom-named playlists dynamically (even if empty)
+        Object.keys(playlistNames).forEach(idx => {
+            const index = parseInt(idx, 10);
+            groups[index] = {
+                playlistIndex: index,
+                title: playlistNames[idx] || `Playlist ${index + 1}`,
+                total: 0,
+                solved: 0,
+                mastered: 0,
+                puzzles: []
+            };
+        });
 
+        // 2. Load puzzles and group them (auto-creates default playlists if puzzles exist inside them)
         const q = query(
             collection(db, 'puzzles'),
-            where('userId', '==', userId),
-            where('isFavorite', '==', false)
+            where('userId', '==', userId)
         );
         const snapshot = await getDocs(q);
-
-        const groups = {
-            0: { playlistIndex: 0, title: names[0], total: 0, solved: 0, mastered: 0, puzzles: [] },
-            1: { playlistIndex: 1, title: names[1], total: 0, solved: 0, mastered: 0, puzzles: [] },
-            2: { playlistIndex: 2, title: names[2], total: 0, solved: 0, mastered: 0, puzzles: [] }
-        };
 
         snapshot.docs.forEach(d => {
             const data = d.data();
             const puzzle = normalizePuzzle(data, d.id);
             const idx = puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0;
-            const targetIdx = (idx === 0 || idx === 1 || idx === 2) ? idx : 0;
+            const targetIdx = parseInt(idx, 10);
+
+            if (!groups[targetIdx]) {
+                groups[targetIdx] = {
+                    playlistIndex: targetIdx,
+                    title: `Playlist ${targetIdx + 1}`,
+                    total: 0,
+                    solved: 0,
+                    mastered: 0,
+                    puzzles: []
+                };
+            }
 
             groups[targetIdx].total++;
             if (data.reviewState?.isSolved) groups[targetIdx].solved++;
@@ -637,8 +697,8 @@ export async function getUserPlaylists(userId) {
             groups[targetIdx].puzzles.push(puzzle);
         });
 
-        return [groups[0], groups[1], groups[2]].map(g => {
-            // Sort puzzles newest first
+        // Convert groups map to a sorted list
+        const list = Object.values(groups).map(g => {
             g.puzzles.sort((a, b) => {
                 const aTime = a.createdAt?.toMillis?.() || 0;
                 const bTime = b.createdAt?.toMillis?.() || 0;
@@ -653,9 +713,52 @@ export async function getUserPlaylists(userId) {
                        : 'Novice'
             };
         });
+
+        // If we have absolutely nothing, ensure at least one default playlist appears
+        if (list.length === 0) {
+            list.push({
+                playlistIndex: 0,
+                title: "Playlist 1",
+                total: 0,
+                solved: 0,
+                mastered: 0,
+                progress: 0,
+                mastery: 'Novice',
+                puzzles: []
+            });
+        }
+
+        list.sort((a, b) => a.playlistIndex - b.playlistIndex);
+        return list;
+
     } catch (e) {
         console.error('getUserPlaylists failed:', e);
         return [];
+    }
+}
+
+/**
+ * Find the first unused playlist index and reserve its name in the user's profile map
+ */
+export async function createPlaylist(userId, name) {
+    try {
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        const playlistNames = userSnap.data()?.playlistNames || {};
+
+        let newIndex = 0;
+        while (playlistNames[newIndex] !== undefined) {
+            newIndex++;
+        }
+
+        await updateDoc(userRef, {
+            [`playlistNames.${newIndex}`]: name.trim()
+        });
+
+        return newIndex;
+    } catch (e) {
+        console.error('createPlaylist failed:', e);
+        throw e;
     }
 }
 
@@ -768,3 +871,86 @@ export async function movePuzzle(userId, puzzleId, targetPlaylistIndex) {
     await updateDoc(puzzleRef, { playlistIndex: targetPlaylistIndex });
     await enforcePlaylistLimits(userId);
 }
+
+/**
+ * Calculate the success stats of the last 5 tries of a playlist/puzzle list.
+ */
+export async function getPlaylistRecentStats(userId, puzzleIds) {
+    try {
+        if (!puzzleIds || puzzleIds.length === 0) {
+            return { percentage: 0, successCount: 0, totalCount: 0 };
+        }
+
+        // Fetch logs for this user (index-free query)
+        const q = query(
+            collection(db, 'activity_logs'),
+            where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+            return { percentage: 0, successCount: 0, totalCount: 0 };
+        }
+
+        // Filter and sort client-side
+        const matchingLogs = snapshot.docs
+            .map(d => d.data())
+            .filter(log => puzzleIds.includes(log.puzzleId))
+            .sort((a, b) => {
+                const aTime = a.timestamp?.toMillis?.() || 0;
+                const bTime = b.timestamp?.toMillis?.() || 0;
+                return bTime - aTime;
+            });
+
+        if (matchingLogs.length === 0) {
+            return { percentage: 0, successCount: 0, totalCount: 0 };
+        }
+
+        // Take the latest 5 attempts
+        const latestAttempts = matchingLogs.slice(0, 5);
+        const successCount = latestAttempts.filter(log => log.result === 'success').length;
+        const totalCount = latestAttempts.length;
+
+        return {
+            percentage: Math.round((successCount / totalCount) * 100),
+            successCount,
+            totalCount
+        };
+    } catch (e) {
+        console.warn('getPlaylistRecentStats failed:', e);
+        return { percentage: 0, successCount: 0, totalCount: 0 };
+    }
+}
+
+/**
+ * Delete all puzzles inside a given playlist
+ */
+export async function clearPlaylist(userId, playlistIndex) {
+    try {
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId),
+            where('playlistIndex', '==', playlistIndex)
+        );
+        const snapshot = await getDocs(q);
+        
+        const batch = writeBatch(db);
+        if (!snapshot.empty) {
+            snapshot.docs.forEach(d => {
+                batch.delete(doc(db, 'puzzles', d.id));
+            });
+        }
+
+        // Reset the custom playlist name in user's profile to default
+        const userRef = doc(db, 'users', userId);
+        batch.update(userRef, {
+            [`playlistNames.${playlistIndex}`]: deleteField()
+        });
+
+        await batch.commit();
+        await enforcePlaylistLimits(userId);
+    } catch (e) {
+        console.error('clearPlaylist failed:', e);
+        throw e;
+    }
+}
+
