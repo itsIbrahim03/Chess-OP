@@ -2,15 +2,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
-import { ArrowRight, Target, CheckCircle2, XCircle, Star } from 'lucide-react';
+import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
     getNextPuzzle,
     getPuzzleById,
     updatePuzzleReview,
-    toggleFavorite
+    toggleFavorite,
+    getUserPlaylists
 } from '../services/puzzleService';
 import { incrementTotalSolved } from '../services/userService';
+import { useNavigate } from 'react-router-dom';
 
 // Import chessground CSS
 import 'chessground/assets/chessground.base.css';
@@ -19,6 +21,7 @@ import 'chessground/assets/chessground.cburnett.css';
 
 export default function TrainingArena() {
     const { user } = useAuth();
+    const navigate = useNavigate();
     const boardRef = useRef(null);
     const cgRef = useRef(null);
     const chessRef = useRef(new Chess());
@@ -34,21 +37,44 @@ export default function TrainingArena() {
     const [toastError, setToastError] = useState(null);
     const [seenPuzzleIds, setSeenPuzzleIds] = useState([]);
 
+    // One-Time session state variables
+    const [isOneTime, setIsOneTime] = useState(false);
+    const [sessionQueue, setSessionQueue] = useState([]);
+    const [currentSessionIndex, setCurrentSessionIndex] = useState(0);
+    const [sessionResults, setSessionResults] = useState([]);
+    const [sessionFinished, setSessionFinished] = useState(false);
+
     // Sync state to ref (avoids stale closures in Chessground callbacks)
     useEffect(() => {
         puzzleRef.current = currentPuzzle;
         setIsFavorited(currentPuzzle?.isFavorite ?? false);
     }, [currentPuzzle]);
 
-    // ─── On Mount: check for ?puzzleId= in URL ──────────────────────────────
+    // ─── On Mount: check for ?puzzleId= or ?session= in URL ─────────────────
     useEffect(() => {
         if (!user) return;
-        // Read DIRECTLY from window.location so we always get the real URL,
-        // not React's potentially-stale searchParams state.
         const params = new URLSearchParams(window.location.search);
         const specificId = params.get('puzzleId');
+        const sessionParam = params.get('session');
 
-        if (specificId) {
+        if (sessionParam === 'one-time') {
+            setIsOneTime(true);
+            const queueStr = sessionStorage.getItem('oneTimePlaylist');
+            if (queueStr) {
+                const queue = JSON.parse(queueStr);
+                setSessionQueue(queue);
+                setCurrentSessionIndex(0);
+                setSessionResults([]);
+                setSessionFinished(false);
+                if (queue.length > 0) {
+                    loadSpecificPuzzle(queue[0]);
+                } else {
+                    loadNextPuzzle();
+                }
+            } else {
+                loadNextPuzzle();
+            }
+        } else if (specificId) {
             loadSpecificPuzzle(specificId);
         } else {
             loadNextPuzzle();
@@ -82,6 +108,19 @@ export default function TrainingArena() {
     // ─── Load next puzzle in rotation ───────────────────────────────────────
     async function loadNextPuzzle(retry = false) {
         if (!user) return;
+        
+        // Handle One-Time Session progression
+        if (isOneTime && !retry) {
+            const nextIdx = currentSessionIndex + 1;
+            if (nextIdx < sessionQueue.length) {
+                setCurrentSessionIndex(nextIdx);
+                await loadSpecificPuzzle(sessionQueue[nextIdx]);
+            } else {
+                setSessionFinished(true);
+            }
+            return;
+        }
+
         setLoading(true);
         setStatus('active');
         try {
@@ -115,7 +154,7 @@ export default function TrainingArena() {
             setToastError('Incomplete puzzle data found. Please use "Reset All Puzzle Data" in Settings and re-analyze.');
             return false;
         }
-        const pColor = puzzle.playerColor || puzzle.color || 'white';
+        const pColor = puzzle.playerColor || puzzle.color || puzzle.userColor || 'white';
         const normalized = { ...puzzle, color: pColor };
         setCurrentPuzzle(normalized);
         setOrientation(pColor);
@@ -188,6 +227,10 @@ export default function TrainingArena() {
             });
             setStats(prev => ({ solved: prev.solved + 1, streak: prev.streak + 1 }));
 
+            if (isOneTime) {
+                logSessionResult(puzzle.id, true);
+            }
+
             try { await updatePuzzleReview(user.uid, puzzle.id, true, 0); }
             catch (e) { console.warn('updatePuzzleReview failed:', e); }
 
@@ -205,6 +248,10 @@ export default function TrainingArena() {
                 { orig: bestMoveFrom, dest: bestMoveTo, brush: 'green' }
             ]);
 
+            if (isOneTime) {
+                logSessionResult(puzzle.id, false);
+            }
+
             try { await updatePuzzleReview(user.uid, puzzle.id, false, 0); }
             catch (e) { console.warn('updatePuzzleReview failed:', e); }
 
@@ -220,6 +267,21 @@ export default function TrainingArena() {
         }
     }
 
+    // Helper to log one-time results
+    function logSessionResult(puzzleId, isSuccess) {
+        setSessionResults(prev => {
+            if (prev.some(r => r.id === puzzleId)) {
+                return prev.map(r => r.id === puzzleId ? { ...r, result: isSuccess } : r);
+            }
+            const puzzle = puzzleRef.current;
+            const name = puzzle?.customName || puzzle?.opening || 'Puzzle';
+            const theme = puzzle?.theme || 'Blunder';
+            const res = [...prev, { id: puzzleId, name, theme, result: isSuccess }];
+            sessionStorage.setItem('oneTimeSessionResults', JSON.stringify(res));
+            return res;
+        });
+    }
+
     async function handleToggleFavorite() {
         const puzzle = puzzleRef.current;
         if (!puzzle || favoriteLoading) return;
@@ -231,14 +293,11 @@ export default function TrainingArena() {
 
         try {
             await toggleFavorite(user.uid, puzzle.id, newFavState);
-            // Do NOT call setCurrentPuzzle here — it would re-trigger the board useEffect
-            // and reset the board position. isFavorited state already handles the UI.
-
         } catch (e) {
             console.error('toggleFavorite failed:', e.code, e.message);
             setIsFavorited(!newFavState);
-            setToastError(e.code === 'permission-denied'
-                ? 'Permission denied — check your Firestore rules.'
+            setToastError(e.message === 'FAVORITES_LIMIT_EXCEEDED'
+                ? 'Favorites limit reached! Maximum 10 starred puzzles allowed.'
                 : `Star failed: ${e.message}`);
             setTimeout(() => setToastError(null), 5000);
         } finally {
@@ -246,16 +305,162 @@ export default function TrainingArena() {
         }
     }
 
+    // Retries another one-time session of 10 random puzzles without leaving
+    const handleRetrySession = async () => {
+        setLoading(true);
+        setSessionFinished(false);
+        setSessionResults([]);
+        try {
+            const playlists = await getUserPlaylists(user.uid);
+            const allPuzzles = playlists.flatMap(g => g.puzzles);
+            if (allPuzzles.length > 0) {
+                const shuffled = [...allPuzzles].sort(() => 0.5 - Math.random());
+                const selected = shuffled.slice(0, 10).map(p => p.id);
+                setSessionQueue(selected);
+                setCurrentSessionIndex(0);
+                sessionStorage.setItem('oneTimePlaylist', JSON.stringify(selected));
+                await loadSpecificPuzzle(selected[0]);
+            } else {
+                setSessionFinished(false);
+                setIsOneTime(false);
+                await loadNextPuzzle();
+            }
+        } catch (e) {
+            console.error('Failed to retry session:', e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // If one-time session completes, show dashboard
+    if (sessionFinished) {
+        const totalCorrect = sessionResults.filter(r => r.result).length;
+        const totalPuzzles = sessionQueue.length;
+        const scorePercentage = totalPuzzles > 0 ? Math.round((totalCorrect / totalPuzzles) * 100) : 0;
+
+        return (
+            <DashboardLayout>
+                <div className="max-w-3xl mx-auto py-8">
+                    <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 shadow-2xl relative overflow-hidden flex flex-col items-center text-center">
+                        {/* Glowing background accent */}
+                        <div className="absolute inset-0 bg-gradient-to-br from-chess-accent/10 to-transparent pointer-events-none" />
+
+                        {/* Celebration icon */}
+                        <div className="w-20 h-20 bg-chess-accent/15 text-chess-accent rounded-full flex items-center justify-center mb-6 shadow-xl shadow-chess-accent/10 animate-bounce">
+                            <Award size={40} />
+                        </div>
+
+                        <h1 className="text-3xl font-serif font-bold text-white mb-2">Session Completed!</h1>
+                        <p className="text-chess-text-secondary text-sm mb-6 max-w-md">
+                            Congratulations! You have completed your one-time 10-puzzle blitz run. Review your results below.
+                        </p>
+
+                        {/* Score summary Speed dial */}
+                        <div className="relative w-36 h-36 flex items-center justify-center mb-8">
+                            <svg className="w-full h-full transform -rotate-90">
+                                <circle
+                                    cx="72"
+                                    cy="72"
+                                    r="60"
+                                    className="stroke-white/5 fill-transparent"
+                                    strokeWidth="8"
+                                />
+                                <circle
+                                    cx="72"
+                                    cy="72"
+                                    r="60"
+                                    className="stroke-emerald-400 fill-transparent transition-all duration-1000"
+                                    strokeWidth="8"
+                                    strokeDasharray={2 * Math.PI * 60}
+                                    strokeDashoffset={2 * Math.PI * 60 - (scorePercentage / 100) * (2 * Math.PI * 60)}
+                                    strokeLinecap="round"
+                                />
+                            </svg>
+                            <div className="absolute flex flex-col items-center">
+                                <span className="text-3xl font-bold text-white">{totalCorrect} / {totalPuzzles}</span>
+                                <span className="text-[10px] uppercase font-bold tracking-wider text-chess-text-secondary mt-1">Solved</span>
+                            </div>
+                        </div>
+
+                        {/* Results list */}
+                        <div className="w-full bg-black/20 border border-white/5 rounded-2xl p-4 max-h-[300px] overflow-y-auto mb-8 space-y-2 text-left">
+                            <h3 className="text-xs uppercase tracking-wider font-bold text-chess-text-secondary mb-3 px-2">Puzzle-by-Puzzle Details</h3>
+                            {sessionResults.map((r, i) => (
+                                <div key={i} className="flex items-center justify-between p-3 bg-white/[0.01] border border-white/5 rounded-xl">
+                                    <div>
+                                        <p className="text-white font-bold text-sm truncate max-w-[240px] sm:max-w-[400px]">
+                                            {r.name}
+                                        </p>
+                                        <p className="text-[10px] text-chess-text-secondary font-medium uppercase mt-0.5 tracking-wider">
+                                            {r.theme}
+                                        </p>
+                                    </div>
+                                    <span className={`text-[10px] uppercase font-bold px-2.5 py-1 rounded-lg border ${
+                                        r.result 
+                                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-450' 
+                                            : 'bg-red-500/10 border-red-500/20 text-red-405'
+                                    }`}>
+                                        {r.result ? 'Correct ✓' : 'Incorrect ✗'}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Navigation buttons */}
+                        <div className="flex flex-wrap items-center justify-center gap-4 w-full">
+                            <button
+                                onClick={handleRetrySession}
+                                className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-450 hover:to-teal-550 text-white px-6 py-3 rounded-xl font-bold text-sm transition-all hover:-translate-y-0.5 shadow-lg shadow-emerald-500/15 flex items-center gap-2"
+                            >
+                                <RotateCcw size={16} /> Try Another 10 Puzzles
+                            </button>
+                            <button
+                                onClick={() => navigate('/dashboard/repertoire')}
+                                className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-6 py-3 rounded-xl font-bold text-sm transition-all hover:-translate-y-0.5 flex items-center gap-2"
+                            >
+                                <ClipboardList size={16} /> Repertoire Page
+                            </button>
+                            <button
+                                onClick={() => navigate('/dashboard')}
+                                className="bg-white/5 hover:bg-white/10 text-white border border-white/10 px-6 py-3 rounded-xl font-bold text-sm transition-all hover:-translate-y-0.5 flex items-center gap-2"
+                            >
+                                <Home size={16} /> Dashboard
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </DashboardLayout>
+        );
+    }
+
     return (
         <DashboardLayout>
             <div className="max-w-6xl mx-auto h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8">
 
                 {/* Board Column */}
-                <div className="flex-1 flex items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl">
-                    <div
-                        ref={boardRef}
-                        className="w-full max-w-[600px] aspect-square rounded-lg shadow-2xl overflow-hidden"
-                    />
+                <div className="flex-1 flex flex-col items-center justify-center gap-4">
+                    {/* Linear session progress bar at top */}
+                    {isOneTime && (
+                        <div className="w-full max-w-[600px] bg-chess-panel border border-white/5 p-4 rounded-2xl flex flex-col gap-2 shadow-lg">
+                            <div className="flex justify-between items-center text-xs text-chess-text-secondary font-bold uppercase tracking-wider">
+                                <span>One-Time Session</span>
+                                <span>Puzzle {currentSessionIndex + 1} of {sessionQueue.length}</span>
+                            </div>
+                            <div className="w-full bg-black/25 h-2 rounded-full overflow-hidden">
+                                <div 
+                                    className="bg-gradient-to-r from-emerald-500 to-teal-500 h-full rounded-full transition-all duration-500"
+                                    style={{ width: `${((currentSessionIndex + 1) / sessionQueue.length) * 100}%` }}
+                                />
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="w-full flex-1 flex items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl">
+                        <div
+                            ref={boardRef}
+                            className="w-full max-w-[600px] aspect-square rounded-lg shadow-2xl overflow-hidden"
+                        />
+                    </div>
                 </div>
 
                 {/* Sidebar Column */}
@@ -277,9 +482,9 @@ export default function TrainingArena() {
                             <>
                                 {/* Puzzle name + favorite button */}
                                 <div className="w-full flex items-start justify-between">
-                                    <div className="text-left">
+                                    <div className="text-left min-w-0 flex-1 mr-2">
                                         <p className="text-chess-text-secondary text-xs uppercase tracking-widest mb-1">Current Puzzle</p>
-                                        <p className="text-white font-bold text-sm truncate max-w-[220px]">
+                                        <p className="text-white font-bold text-sm truncate" title={currentPuzzle.customName || currentPuzzle.opening}>
                                             {currentPuzzle.customName || currentPuzzle.opening || 'Opening Puzzle'}
                                         </p>
                                     </div>
@@ -313,7 +518,7 @@ export default function TrainingArena() {
                                         onClick={() => loadNextPuzzle(false)}
                                         className="w-full py-4 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
                                     >
-                                        <ArrowRight /> Next Puzzle
+                                        <ArrowRight /> {isOneTime && (currentSessionIndex + 1 === sessionQueue.length) ? 'Finish Session' : 'Next Puzzle'}
                                     </button>
                                 </div>
                             </>
