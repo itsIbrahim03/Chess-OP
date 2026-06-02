@@ -11,7 +11,6 @@ import { getUserProfile } from '../services/userService';
 import {
   getUserPuzzleStats,
   getUserPlaylists,
-  getPlaylistRecentStats,
   getRecentlyAttemptedPuzzles,
   getFavoritePuzzles,
   getNewPuzzleCount
@@ -44,7 +43,6 @@ export default function Dashboard() {
   const [userProfile, setUserProfile] = useState(null);
   const [puzzleStats, setPuzzleStats] = useState(null);
   const [playlists, setPlaylists] = useState([]);
-  const [solveRates, setSolveRates] = useState({});
   const [history, setHistory] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [newCount, setNewCount] = useState(0);
@@ -64,6 +62,12 @@ export default function Dashboard() {
         getUserProfile(user.uid),
         getUserPuzzleStats(user.uid),
       ]);
+      // If onboarding is not completed, redirect to onboarding page
+      if (profile && profile.onboardingCompleted !== true) {
+        navigate('/onboarding');
+        return;
+      }
+
       setUserProfile(profile);
       setPuzzleStats(stats);
     } catch (e) {
@@ -82,24 +86,14 @@ export default function Dashboard() {
     ]);
 
     if (groups.status === 'fulfilled') {
-      const loadedPlaylists = groups.value;
-      setPlaylists(loadedPlaylists);
-      // Load recent success rates (last 5 attempts) in parallel
-      loadedPlaylists.forEach(async (group) => {
-        const puzzleIds = group.puzzles.map(p => p.id);
-        const stats = await getPlaylistRecentStats(user.uid, puzzleIds);
-        setSolveRates(prev => ({
-          ...prev,
-          [group.playlistIndex]: stats
-        }));
-      });
+      setPlaylists(groups.value);
     }
     if (logs.status === 'fulfilled') setHistory(logs.value);
     if (favs.status === 'fulfilled') setFavorites(favs.value.slice(0, 3));
     if (count.status === 'fulfilled') setNewCount(count.value);
 
     setLoading(false);
-  }, [user]);
+  }, [user, navigate]);
 
   useEffect(() => {
     if (user?.uid) {
@@ -109,14 +103,6 @@ export default function Dashboard() {
       return () => clearTimeout(timer);
     }
   }, [user, loadAll]);
-
-  // ─── Mastery badge colour ───────────────────────────────────────────────────
-  const masteryColor = {
-    Expert: 'text-yellow-400 bg-yellow-400/10',
-    Advanced: 'text-blue-400 bg-blue-400/10',
-    Intermediate: 'text-green-400 bg-green-400/10',
-    Novice: 'text-chess-text-secondary bg-white/5',
-  };
 
   return (
     <DashboardLayout>
@@ -283,8 +269,6 @@ export default function Dashboard() {
               return (
                 <div className={gridClass}>
                   {activePlaylists.map((pl, i) => {
-                    const rateStats = solveRates[pl.playlistIndex] || { percentage: 0, successCount: 0, totalCount: 0 };
-
                     return (
                       <div
                         key={i}

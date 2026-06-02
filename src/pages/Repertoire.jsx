@@ -440,7 +440,6 @@ export default function Repertoire() {
         };
     });
 
-    const totalFilteredPuzzles = filteredGroups.reduce((acc, curr) => acc + curr.filteredPuzzles.length, 0);
     const hasAnyPuzzles = groups.some(g => g.total > 0 || g.puzzles.length > 0);
 
     // SVG Circular Ring Gauge
