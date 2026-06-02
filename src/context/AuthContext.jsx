@@ -1,6 +1,16 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { auth, googleProvider } from "../firebase";
-import { signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import {
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile
+} from "firebase/auth";
 import { initializeUserProfile, updateDailyStreak } from '../services/userService';
 
 
@@ -11,11 +21,56 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const login = () => signInWithPopup(auth, googleProvider);
-  const logout = () => signOut(auth);
+  /**
+   * Set persistence state.
+   */
+  const applyPersistence = async (rememberMe) => {
+    const persistence = rememberMe ? browserLocalPersistence : browserSessionPersistence;
+    await setPersistence(auth, persistence);
+    if (rememberMe) {
+      localStorage.setItem('chess-op-remember-me', 'true');
+    } else {
+      localStorage.removeItem('chess-op-remember-me');
+    }
+  };
+
+  /**
+   * Login with Google popup.
+   */
+  const login = async (rememberMe = false) => {
+    await applyPersistence(rememberMe);
+    return signInWithPopup(auth, googleProvider);
+  };
+
+  /**
+   * Login with Email and Password.
+   */
+  const loginWithEmail = async (email, password, rememberMe = false) => {
+    await applyPersistence(rememberMe);
+    return signInWithEmailAndPassword(auth, email, password);
+  };
+
+  /**
+   * Signup with Email and Password.
+   */
+  const signupWithEmail = async (email, password, displayName, rememberMe = false) => {
+    await applyPersistence(rememberMe);
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    // Set display name in the Auth profile
+    if (displayName && displayName.trim()) {
+      await updateProfile(userCredential.user, {
+        displayName: displayName.trim()
+      });
+    }
+    return userCredential;
+  };
+
+  const logout = async () => {
+    localStorage.removeItem('chess-op-remember-me');
+    return signOut(auth);
+  };
 
   // Listen for auth state changes (login/logout events)
-  // onAuthStateChanged returns an unsubscribe function for cleanup
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -31,15 +86,13 @@ export const AuthProvider = ({ children }) => {
         }
       }
 
-
       setLoading(false);
     });
     return unsubscribe; // Clean up listener when component unmounts
   }, []);
 
-  // Don't render children until we know the auth state to prevent flashing
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, login, loginWithEmail, signupWithEmail, logout, loading }}>
       {!loading && children}
     </AuthContext.Provider>
   );

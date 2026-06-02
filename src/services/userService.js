@@ -41,6 +41,7 @@ export async function initializeUserProfile(user) {
         email: user.email,
         displayName: user.displayName || 'Player',
         photoUrl: user.photoURL || null,
+        onboardingCompleted: false,
 
         // Lichess Integration (initially empty)
         lichessUsername: '',
@@ -68,6 +69,24 @@ export async function initializeUserProfile(user) {
         // Metadata
         createdAt: serverTimestamp(),
         lastScan: null
+    });
+}
+
+/**
+ * Complete user onboarding setup
+ * 
+ * @param {string} userId - Firebase Auth UID
+ * @param {Object} data - Profile updates (displayName, lichessUsername, settings)
+ * @returns {Promise<void>}
+ */
+export async function completeOnboarding(userId, { displayName, lichessUsername, settings }) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+        displayName: displayName.trim() || 'Player',
+        lichessUsername: lichessUsername.trim() || '',
+        'settings.autoAnalyze': settings?.autoAnalyze ?? false,
+        'settings.minElo': settings?.minElo ?? 1000,
+        onboardingCompleted: true
     });
 }
 
