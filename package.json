@@ -15,6 +15,7 @@
     "chessground": "^9.2.1",
     "firebase": "^12.6.0",
     "lucide-react": "^0.562.0",
+    "puppeteer-core": "^25.1.0",
     "react": "^19.2.0",
     "react-chessboard": "^5.8.6",
     "react-dom": "^19.2.0",

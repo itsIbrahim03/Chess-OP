@@ -20,8 +20,8 @@ export default {
             secondary: '#94A3B8',
           },
           accent: {
-            DEFAULT: '#38BDF8', // Sky Blue Action
-            hover: '#0EA5E9',
+            DEFAULT: 'var(--chess-accent, #38BDF8)',
+            hover: 'var(--chess-accent-hover, #0EA5E9)',
           },
           status: {
             success: '#10B981', // Emerald
