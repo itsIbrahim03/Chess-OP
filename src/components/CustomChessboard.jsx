@@ -1,28 +1,12 @@
 
 import { Chess } from 'chess.js';
 import { useMemo } from 'react';
+import { getBoardTheme } from '../lib/boardThemes';
+import { getPieceSet } from '../lib/pieceSets';
 
-// Piece Images (Standard Lichess/Cburnett style)
-const PIECE_IMAGES = {
-    w: {
-        p: "https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg",
-        n: "https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg",
-        b: "https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg",
-        r: "https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg",
-        q: "https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg",
-        k: "https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg",
-    },
-    b: {
-        p: "https://upload.wikimedia.org/wikipedia/commons/c/c7/Chess_pdt45.svg",
-        n: "https://upload.wikimedia.org/wikipedia/commons/e/ef/Chess_ndt45.svg",
-        b: "https://upload.wikimedia.org/wikipedia/commons/9/98/Chess_bdt45.svg",
-        r: "https://upload.wikimedia.org/wikipedia/commons/f/ff/Chess_rdt45.svg",
-        q: "https://upload.wikimedia.org/wikipedia/commons/4/47/Chess_qdt45.svg",
-        k: "https://upload.wikimedia.org/wikipedia/commons/f/f0/Chess_kdt45.svg",
-    },
-};
 
-export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white' }) {
+
+export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white', themeId = 'classic', pieceSetId = 'cburnett' }) {
     // Use chess.js to derive the board array from the FEN
     const board = useMemo(() => {
         try {
@@ -33,6 +17,9 @@ export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white' 
             return new Chess().board(); // Fallback to start
         }
     }, [fen]);
+
+    const theme = getBoardTheme(themeId);
+    const pieceSet = getPieceSet(pieceSetId);
 
     const squareSize = boardWidth / 8;
     const isFlipped = orientation === 'black';
@@ -79,7 +66,7 @@ export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white' 
                     // OR simply visual grid coordinates:
                     // (rIndex + cIndex) % 2 === 0 ? Light : Dark.
                     const isLight = (rIndex + cIndex) % 2 === 0;
-                    const bg = isLight ? "#f0d9b5" : "#b58863"; // Classic Wood Colors
+                    const bg = isLight ? theme.lightSquare : theme.darkSquare;
 
                     return (
                         <div
@@ -96,7 +83,7 @@ export function CustomChessboard({ fen, boardWidth = 280, orientation = 'white' 
                         >
                             {piece && (
                                 <img
-                                    src={PIECE_IMAGES[piece.color][piece.type]}
+                                    src={pieceSet.pieces[piece.color][piece.type]}
                                     alt={`${piece.color}${piece.type}`}
                                     style={{ width: "90%", height: "90%", objectFit: "contain" }}
                                 />

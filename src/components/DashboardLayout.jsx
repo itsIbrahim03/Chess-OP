@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import {
     LayoutDashboard,
     BookOpen,
@@ -13,13 +15,40 @@ import {
     X,
     Search,
     Bell,
-    Target
+    Target,
+    Brain
 } from 'lucide-react';
+import { getUserProfile } from '../services/userService';
 
 export default function DashboardLayout({ children }) {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
+    const [profileData, setProfileData] = useState(null);
+
+    useEffect(() => {
+        if (!user?.uid) return;
+
+        const userRef = doc(db, 'users', user.uid);
+        const unsubscribe = onSnapshot(userRef, (snapshot) => {
+            if (snapshot.exists()) {
+                setProfileData(snapshot.data());
+            }
+        }, (error) => {
+            console.error("Error listening to profile changes:", error);
+        });
+
+        return () => unsubscribe();
+    }, [user?.uid]);
+
+
+
+    const FLAIR_MAP = {
+        'king': '♔', 'queen': '♛', 'knight': '♞', 'rook': '♜', 'bishop': '♝',
+        'pawn': '♟', 'trophy': '🏆', 'lightning': '⚡', 'fire': '🔥', 'brain': '🧠',
+        'target': '🎯', 'star': '⭐', 'diamond': '💎', 'rocket': '🚀', 'shield': '🛡️',
+    };
+    const flairEmoji = profileData?.flair && profileData.flair !== 'none' ? FLAIR_MAP[profileData.flair] : null;
 
     // Persist sidebar state in localStorage
     const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -35,9 +64,9 @@ export default function DashboardLayout({ children }) {
 
     const menuItems = [
         { icon: LayoutDashboard, label: 'Overview', path: '/dashboard' },
-        { icon: Target, label: 'Training Arena', path: '/dashboard/train' },
+        { icon: Brain, label: 'Analysis Manager', path: '/dashboard/analysis-board' },
         { icon: BookOpen, label: 'My Repertoire', path: '/dashboard/repertoire' },
-        { icon: History, label: 'Game History', path: '/dashboard/history' },
+        { icon: Target, label: 'Training Area', path: '/dashboard/train' },
         { icon: Settings, label: 'Settings', path: '/dashboard/settings' },
     ];
 
@@ -50,8 +79,17 @@ export default function DashboardLayout({ children }) {
         }
     };
 
+    const selectedColor = { primary: '#38BDF8', hover: '#0EA5E9' };
+
     return (
         <div className="h-screen bg-chess-bg text-chess-text-primary font-sans flex overflow-hidden">
+            {/* Dynamic Accent Color Overrides */}
+            <style>{`
+                :root {
+                    --chess-accent: ${selectedColor.primary} !important;
+                    --chess-accent-hover: ${selectedColor.hover} !important;
+                }
+            `}</style>
 
             {/* Sidebar */}
             <aside
@@ -109,13 +147,28 @@ export default function DashboardLayout({ children }) {
                     {/* User Profile */}
                     <div className="p-4 border-t border-white/5">
                         <div className={`flex items-center gap-3 ${!sidebarOpen ? 'justify-center' : ''}`}>
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-med to-brand-dark border border-white/10 flex items-center justify-center text-white font-bold text-sm shadow-inner shrink-0">
-                                {user?.email?.[0].toUpperCase() || 'G'}
-                            </div>
+                            {profileData?.photoUrl || user?.photoURL ? (
+                                <img src={profileData?.photoUrl || user?.photoURL} alt="Avatar" className="w-10 h-10 rounded-full border border-white/10 object-cover shrink-0" />
+                            ) : (
+                                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-med to-brand-dark border border-white/10 flex items-center justify-center text-white font-bold text-sm shadow-inner shrink-0">
+                                    {(profileData?.displayName || user?.displayName || user?.email)?.[0]?.toUpperCase() || 'G'}
+                                </div>
+                            )}
 
                             {sidebarOpen && (
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-bold text-white truncate">{user?.displayName || 'Player'}</p>
+                                    <p className="text-sm font-bold text-white truncate flex items-center gap-1.5">
+                                        {profileData?.country && (
+                                            <img
+                                                src={`https://flagcdn.com/w20/${profileData.country.toLowerCase() === 'uk' ? 'gb' : profileData.country.toLowerCase()}.png`}
+                                                alt=""
+                                                className="w-5 h-3.5 object-cover rounded-sm inline-block shrink-0 shadow-sm"
+                                                onError={(e) => { e.target.style.display = 'none'; }}
+                                            />
+                                        )}
+                                        <span className="truncate">{profileData?.displayName || user?.displayName || 'Player'}</span>
+                                        {flairEmoji && <span className="ml-0.5 text-xs inline-block shrink-0">{flairEmoji}</span>}
+                                    </p>
                                     <p className="text-xs text-chess-text-secondary truncate">{user?.email}</p>
                                 </div>
                             )}

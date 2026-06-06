@@ -79,7 +79,7 @@ const Landing = () => {
 
                     {/* Value Proposition */}
                     <p className="text-xl text-chess-text-secondary max-w-3xl mx-auto mb-14 leading-relaxed font-light">
-                        Generic tactics don't work. We analyze your actual games to build a <span className="text-brand-light font-medium">Personalized Punishment Library</span>.
+                        Generic tactics don't work. We analyse your actual games to build a <span className="text-brand-light font-medium">Personalized Punishment Library</span>.
                         Target the exact mistakes your opponents make against <strong>you</strong>.
                     </p>
 
@@ -90,7 +90,7 @@ const Landing = () => {
                             className="px-10 py-5 bg-white/5 hover:bg-white/10 text-white border border-chess-accent/50 rounded-xl font-bold text-xl transition-all shadow-2xl shadow-chess-accent/10 hover:shadow-chess-accent/30 hover:-translate-y-1 flex items-center gap-3 backdrop-blur-md"
                         >
                             <Wand2 size={28} className="text-chess-accent" />
-                            Analyze My Games
+                            Analyse My Games
                         </button>
                     </div>
                 </div>

@@ -5,7 +5,7 @@ import DashboardLayout from '../components/DashboardLayout';
 import {
   Play, Star, Plus, Trophy, Flame, BookOpen,
   History, ArrowRight, CheckCircle, XCircle,
-  Loader2, AlertCircle, ChevronRight
+  Loader2, AlertCircle, ChevronRight, Search
 } from 'lucide-react';
 import { getUserProfile } from '../services/userService';
 import {
@@ -116,7 +116,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Welcome ──────────────────────────────────────────────────────────── */}
+      {/* Welcome */}
       <div className="mb-10">
         <h1 className="text-3xl font-serif font-bold text-white mb-2">
           {greeting()}, {firstName}
@@ -130,10 +130,33 @@ export default function Dashboard() {
           </p>
         ) : (
           <p className="text-chess-text-secondary">
-            All puzzles reviewed! <span className="text-chess-accent font-bold">Analyze more games</span> to generate new ones.
+            All puzzles reviewed! <span className="text-chess-accent font-bold">Analyse more games</span> to generate new ones.
           </p>
         )}
       </div>
+
+      {/* Lichess Connection Alert Banner */}
+      {!loading && !userProfile?.lichessUsername && (
+        <div className="mb-8 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-amber-500/5">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 bg-amber-500/15 border border-amber-500/30 rounded-xl flex items-center justify-center shrink-0">
+              <AlertCircle className="text-amber-500" size={20} />
+            </div>
+            <div>
+              <h4 className="font-bold text-white mb-0.5">Link your Lichess account</h4>
+              <p className="text-sm text-chess-text-secondary">
+                You haven't linked a Lichess username yet. Link your account in Settings to start scanning and generating chess puzzles!
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/dashboard/settings')}
+            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-amber-500/10 whitespace-nowrap"
+          >
+            Go to Settings
+          </button>
+        </div>
+      )}
 
       {/* ── Stats Row ────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
@@ -168,14 +191,24 @@ export default function Dashboard() {
 
         {/* Resume Training CTA */}
         <div
-          onClick={() => navigate('/dashboard/train')}
-          className="bg-gradient-to-br from-chess-accent to-chess-accent/80 p-6 rounded-2xl relative overflow-hidden text-white shadow-lg shadow-chess-accent/20 cursor-pointer hover:shadow-chess-accent/40 hover:-translate-y-0.5 transition-all"
+          className="bg-gradient-to-br from-chess-accent to-chess-accent/80 p-6 rounded-2xl relative overflow-hidden text-white shadow-lg shadow-chess-accent/20"
         >
           <h3 className="text-white/90 text-sm font-medium mb-1">Quick Start</h3>
           <div className="text-2xl font-bold mb-4">Resume Training</div>
-          <button className="bg-white text-chess-accent px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-white/90 transition-colors">
-            <Play size={16} fill="currentColor" /> Continue Session
-          </button>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button 
+              onClick={(e) => { e.stopPropagation(); navigate('/dashboard/analysis-board', { state: { activeTab: 'ingest' } }); }}
+              className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-colors"
+            >
+              <Search size={16} /> Analyse Games
+            </button>
+            <button 
+              onClick={(e) => { e.stopPropagation(); navigate('/dashboard/train'); }}
+              className="flex-1 bg-white text-chess-accent px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 hover:bg-white/90 transition-colors"
+            >
+              <Play size={16} fill="currentColor" /> Continue Session
+            </button>
+          </div>
         </div>
       </div>
 
@@ -213,12 +246,12 @@ export default function Dashboard() {
                   <div className="bg-chess-panel border border-dashed border-white/10 rounded-xl p-10 text-center">
                     <BookOpen size={40} className="text-chess-text-secondary mx-auto mb-3 opacity-50" />
                     <p className="text-white font-medium mb-1">No playlists yet</p>
-                    <p className="text-chess-text-secondary text-sm mb-4">Analyze your games to generate your first puzzle set.</p>
+                    <p className="text-chess-text-secondary text-sm mb-4">Analyse your games to generate your first puzzle set.</p>
                     <button
-                      onClick={() => navigate('/dashboard/analyze')}
+                      onClick={() => navigate('/dashboard/analysis-board', { state: { activeTab: 'ingest' } })}
                       className="bg-chess-accent text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-chess-accent/90 transition-colors"
                     >
-                      Analyze My Games
+                      Analyse My Games
                     </button>
                   </div>
                 );

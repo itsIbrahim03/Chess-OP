@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { completeOnboarding } from '../services/userService';
+import { completeOnboarding, verifyLichessUsername } from '../services/userService';
 import { ArrowRight, User, Globe, Settings, ShieldCheck, Loader2 } from 'lucide-react';
 
 export default function Onboarding() {
@@ -9,10 +9,33 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [lichessUsername, setLichessUsername] = useState('');
-  const [autoAnalyze, setAutoAnalyze] = useState(false);
   const [minElo, setMinElo] = useState(1500);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [lichessVerifyState, setLichessVerifyState] = useState('idle'); // idle | loading | valid | invalid
+  const [lichessVerifyProfile, setLichessVerifyProfile] = useState(null);
+  const verifyTimer = useRef(null);
+
+  const handleLichessChange = (val) => {
+    setLichessUsername(val);
+    if (verifyTimer.current) clearTimeout(verifyTimer.current);
+    if (!val.trim()) {
+      setLichessVerifyState('idle');
+      setLichessVerifyProfile(null);
+      return;
+    }
+    setLichessVerifyState('loading');
+    verifyTimer.current = setTimeout(async () => {
+      try {
+        const result = await verifyLichessUsername(val);
+        setLichessVerifyState(result.valid ? 'valid' : 'invalid');
+        setLichessVerifyProfile(result.valid ? result.profile : null);
+      } catch {
+        setLichessVerifyState('invalid');
+        setLichessVerifyProfile(null);
+      }
+    }, 500);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,7 +51,6 @@ export default function Onboarding() {
         displayName: displayName.trim(),
         lichessUsername: lichessUsername.trim(),
         settings: {
-          autoAnalyze,
           minElo: parseInt(minElo, 10)
         }
       });
@@ -101,16 +123,41 @@ export default function Onboarding() {
               </h2>
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-chess-text-secondary">LICHESS USERNAME (OPTIONAL)</label>
-                <input
-                  type="text"
-                  value={lichessUsername}
-                  onChange={(e) => setLichessUsername(e.target.value)}
-                  placeholder="e.g. LichessGM"
-                  className="w-full bg-chess-bg/80 border border-white/10 text-white rounded-xl py-3.5 px-4 focus:outline-none focus:border-chess-accent/50 transition-colors"
-                />
-                <p className="text-[11px] text-chess-text-secondary pt-1">
-                  We use this to analyze and import your actual games automatically. You can also connect it later.
-                </p>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={lichessUsername}
+                    onChange={(e) => handleLichessChange(e.target.value)}
+                    placeholder="e.g. LichessGM"
+                    className="w-full bg-chess-bg/80 border border-white/10 text-white rounded-xl py-3.5 px-4 pr-10 focus:outline-none focus:border-chess-accent/50 transition-colors"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    {lichessVerifyState === 'loading' && (
+                      <Loader2 size={18} className="animate-spin text-chess-text-secondary" />
+                    )}
+                    {lichessVerifyState === 'valid' && (
+                      <span className="text-chess-status-success" title="Username verified">✓</span>
+                    )}
+                    {lichessVerifyState === 'invalid' && (
+                      <span className="text-chess-status-error" title="Username not found">✗</span>
+                    )}
+                  </div>
+                </div>
+                {lichessVerifyState === 'valid' && lichessVerifyProfile && (
+                  <p className="text-chess-status-success text-[11px] pt-1 font-medium">
+                    ✓ Verified: {lichessVerifyProfile.username} ({lichessVerifyProfile.count?.rated || 0} rated games)
+                  </p>
+                )}
+                {lichessVerifyState === 'invalid' && lichessUsername.trim() && (
+                  <p className="text-chess-status-error text-[11px] pt-1">
+                    ✗ Username not found on Lichess
+                  </p>
+                )}
+                {lichessVerifyState === 'idle' && (
+                  <p className="text-[11px] text-chess-text-secondary pt-1">
+                    We use this to analyse and import your actual games automatically. You can also connect it later.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -121,23 +168,6 @@ export default function Onboarding() {
                 <span>3. Initial Preferences</span>
               </h2>
               <div className="space-y-6">
-                {/* Auto Analyze Toggle */}
-                <div className="flex items-center justify-between">
-                  <div className="flex flex-col">
-                    <span className="text-sm font-semibold text-white">Auto-analyze newly imported games</span>
-                    <span className="text-xs text-chess-text-secondary">Analyze games automatically upon upload</span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoAnalyze}
-                      onChange={(e) => setAutoAnalyze(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-chess-accent" />
-                  </label>
-                </div>
-
                 {/* Min Elo Slider */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -146,8 +176,8 @@ export default function Onboarding() {
                   </div>
                   <input
                     type="range"
-                    min="1000"
-                    max="2800"
+                    min="600"
+                    max="1800"
                     step="50"
                     value={minElo}
                     onChange={(e) => setMinElo(e.target.value)}

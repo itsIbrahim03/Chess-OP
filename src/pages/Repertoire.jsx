@@ -370,7 +370,7 @@ export default function Repertoire() {
         const allPuzzles = groups.flatMap(g => g.puzzles);
 
         if (allPuzzles.length === 0) {
-            setToast({ message: 'No puzzles available in your repertoire. Analyze games first!', type: 'error' });
+            setToast({ message: 'No puzzles available in your repertoire. Analyse games first!', type: 'error' });
             setTimeout(() => setToast(null), 4000);
             return;
         }
@@ -513,7 +513,7 @@ export default function Repertoire() {
                         <p className="text-chess-text-secondary">
                             {viewMode === 'playlists'
                                 ? 'Organize your blunders into dynamic sequential training playlists of up to 20 puzzles each.'
-                                : 'Explore your analyzed blunders grouped dynamically by opening name.'
+                                : 'Explore your analysed blunders grouped dynamically by opening name.'
                             }
                         </p>
                     </div>
@@ -586,10 +586,10 @@ export default function Repertoire() {
                             You don't have any puzzles loaded yet. Link your Lichess account and scan your matches to generate blunder training puzzles!
                         </p>
                         <button
-                            onClick={() => navigate('/dashboard/analyze')}
+                            onClick={() => navigate('/dashboard/analysis-board', { state: { activeTab: 'ingest' } })}
                             className="px-6 py-3 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-chess-accent/20 hover:-translate-y-0.5 transition-all"
                         >
-                            Analyze Games <ArrowRight size={18} />
+                            Analyse Games <ArrowRight size={18} />
                         </button>
                     </div>
                 ) : (

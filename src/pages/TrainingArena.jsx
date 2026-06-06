@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
-import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList } from 'lucide-react';
+import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
     getNextPuzzle,
@@ -11,8 +11,10 @@ import {
     toggleFavorite,
     getUserPlaylists
 } from '../services/puzzleService';
-import { incrementTotalSolved } from '../services/userService';
+import { incrementTotalSolved, getUserProfile } from '../services/userService';
 import { useNavigate } from 'react-router-dom';
+import { getBoardTheme } from '../lib/boardThemes';
+import { getPieceSet } from '../lib/pieceSets';
 
 // Import chessground CSS
 import 'chessground/assets/chessground.base.css';
@@ -37,6 +39,13 @@ export default function TrainingArena() {
     const [toastError, setToastError] = useState(null);
     const [seenPuzzleIds, setSeenPuzzleIds] = useState([]);
 
+    // Board customization
+    const [boardTheme, setBoardTheme] = useState(getBoardTheme('classic'));
+    const [pieceSet, setPieceSet] = useState(getPieceSet('cburnett'));
+    const [autoNext, setAutoNext] = useState(false);
+    const [soundEnabled, setSoundEnabled] = useState(true);
+    const [showCoordinates, setShowCoordinates] = useState(true);
+
     // One-Time session state variables
     const [isOneTime, setIsOneTime] = useState(false);
     const [sessionQueue, setSessionQueue] = useState([]);
@@ -49,6 +58,18 @@ export default function TrainingArena() {
         puzzleRef.current = currentPuzzle;
         setIsFavorited(currentPuzzle?.isFavorite ?? false);
     }, [currentPuzzle]);
+
+    // ─── Load user preferences on mount ──────────────────────────────────────
+    useEffect(() => {
+        if (!user) return;
+        getUserProfile(user.uid).then(profile => {
+            if (profile?.settings?.boardTheme) setBoardTheme(getBoardTheme(profile.settings.boardTheme));
+            if (profile?.settings?.pieceSet) setPieceSet(getPieceSet(profile.settings.pieceSet));
+            if (profile?.settings?.autoNext !== undefined) setAutoNext(profile.settings.autoNext);
+            if (profile?.settings?.soundEnabled !== undefined) setSoundEnabled(profile.settings.soundEnabled);
+            if (profile?.settings?.showCoordinates !== undefined) setShowCoordinates(profile.settings.showCoordinates);
+        }).catch(() => {});
+    }, [user]);
 
     // ─── On Mount: check for ?puzzleId= or ?session= in URL ─────────────────
     useEffect(() => {
@@ -151,7 +172,7 @@ export default function TrainingArena() {
     function applyPuzzle(puzzle) {
         if (!puzzle.fen) {
             console.error('Puzzle data is incomplete (missing FEN):', puzzle);
-            setToastError('Incomplete puzzle data found. Please use "Reset All Puzzle Data" in Settings and re-analyze.');
+            setToastError('Incomplete puzzle data found. Please use "Reset All Puzzle Data" in Settings and re-analyse.');
             return false;
         }
         const pColor = puzzle.playerColor || puzzle.color || puzzle.userColor || 'white';
@@ -161,6 +182,50 @@ export default function TrainingArena() {
         chessRef.current.load(normalized.fen);
         return true;
     }
+
+    const playSound = (type) => {
+        if (!soundEnabled) return;
+        const urls = {
+            move: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/move-self.mp3',
+            capture: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/capture.mp3',
+            check: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/check.mp3',
+            success: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/game-end.mp3',
+            failure: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/low-time.mp3'
+        };
+        const audio = new Audio(urls[type]);
+        audio.play().catch(e => console.warn('Audio play failed:', e));
+    };
+
+    const handleHint = () => {
+        if (!currentPuzzle || !cgRef.current) return;
+        const bestMoveFrom = currentPuzzle.correctMove.substring(0, 2);
+        cgRef.current.setShapes([{ orig: bestMoveFrom, brush: 'yellow' }]);
+        playSound('move');
+    };
+
+    const handleShowSolution = () => {
+        if (!currentPuzzle || !cgRef.current) return;
+        const bestMoveFrom = currentPuzzle.correctMove.substring(0, 2);
+        const bestMoveTo = currentPuzzle.correctMove.substring(2, 4);
+        cgRef.current.setShapes([
+            { orig: bestMoveFrom, dest: bestMoveTo, brush: 'green' }
+        ]);
+        setStatus('solution_revealed');
+        playSound('failure');
+    };
+
+    const handleDoAgain = () => {
+        if (!currentPuzzle || !cgRef.current) return;
+        chessRef.current.load(currentPuzzle.fen);
+        cgRef.current.set({
+            fen: currentPuzzle.fen,
+            turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
+            movable: { color: currentPuzzle.color, dests: getLegalMoves() },
+            drawable: { shapes: [] }
+        });
+        setStatus('active');
+        playSound('move');
+    };
 
 
     // ─── Board: initialize or reconfigure when puzzle changes ───────────────
@@ -214,6 +279,7 @@ export default function TrainingArena() {
         if (!puzzle) return;
 
         const moves = chessRef.current.moves({ verbose: true });
+        const moveDetails = moves.find(m => m.from === from && m.to === to);
         const isPromotion = moves.some(m => m.from === from && m.to === to && m.promotion);
         const uciMove = from + to + (isPromotion ? 'q' : '');
         const isCorrect = uciMove === puzzle.correctMove;
@@ -221,6 +287,16 @@ export default function TrainingArena() {
         if (isCorrect) {
             setStatus('success');
             chessRef.current.move({ from, to, promotion: 'q' });
+            
+            // Play success/capture/check sound
+            if (moveDetails?.captured) {
+                playSound('capture');
+            } else if (chessRef.current.inCheck()) {
+                playSound('check');
+            } else {
+                playSound('success');
+            }
+
             cgRef.current.set({
                 fen: chessRef.current.fen(),
                 movable: { color: null, dests: new Map() }
@@ -237,8 +313,21 @@ export default function TrainingArena() {
             try { await incrementTotalSolved(user.uid); }
             catch (e) { console.warn('incrementTotalSolved failed:', e); }
 
+            // Handle auto-next puzzle progression
+            if (autoNext) {
+                const isLastInSession = isOneTime && (currentSessionIndex + 1 === sessionQueue.length);
+                setTimeout(() => {
+                    if (isLastInSession) {
+                        setSessionFinished(true);
+                    } else {
+                        loadNextPuzzle(false);
+                    }
+                }, 1500);
+            }
+
         } else {
             setStatus('failure');
+            playSound('failure');
             setStats(prev => ({ ...prev, streak: 0 }));
 
             const bestMoveFrom = puzzle.correctMove.substring(0, 2);
@@ -455,7 +544,25 @@ export default function TrainingArena() {
                         </div>
                     )}
 
-                    <div className="w-full flex-1 flex items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl">
+                    <div className="w-full flex-1 flex items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl relative">
+                        {/* Dynamic board theme + piece set CSS */}
+                        <style>{`
+                            .cg-wrap piece.white.pawn { background-image: url('${pieceSet.pieces.w.p}') !important; }
+                            .cg-wrap piece.white.knight { background-image: url('${pieceSet.pieces.w.n}') !important; }
+                            .cg-wrap piece.white.bishop { background-image: url('${pieceSet.pieces.w.b}') !important; }
+                            .cg-wrap piece.white.rook { background-image: url('${pieceSet.pieces.w.r}') !important; }
+                            .cg-wrap piece.white.queen { background-image: url('${pieceSet.pieces.w.q}') !important; }
+                            .cg-wrap piece.white.king { background-image: url('${pieceSet.pieces.w.k}') !important; }
+                            .cg-wrap piece.black.pawn { background-image: url('${pieceSet.pieces.b.p}') !important; }
+                            .cg-wrap piece.black.knight { background-image: url('${pieceSet.pieces.b.n}') !important; }
+                            .cg-wrap piece.black.bishop { background-image: url('${pieceSet.pieces.b.b}') !important; }
+                            .cg-wrap piece.black.rook { background-image: url('${pieceSet.pieces.b.r}') !important; }
+                            .cg-wrap piece.black.queen { background-image: url('${pieceSet.pieces.b.q}') !important; }
+                            .cg-wrap piece.black.king { background-image: url('${pieceSet.pieces.b.k}') !important; }
+                            .cg-wrap square.white { background-color: ${boardTheme.lightSquare} !important; }
+                            .cg-wrap square.black { background-color: ${boardTheme.darkSquare} !important; }
+                            .cg-wrap coords { display: ${showCoordinates === false ? 'none' : 'block'} !important; }
+                        `}</style>
                         <div
                             ref={boardRef}
                             className="w-full max-w-[600px] aspect-square rounded-lg shadow-2xl overflow-hidden"
@@ -507,25 +614,67 @@ export default function TrainingArena() {
                                     {status === 'active' && 'Solve this!'}
                                     {status === 'success' && <span className="text-green-400 flex items-center justify-center gap-2"><CheckCircle2 /> Correct!</span>}
                                     {status === 'failure' && <span className="text-red-400 flex items-center justify-center gap-2"><XCircle /> Incorrect</span>}
+                                    {status === 'solution_revealed' && <span className="text-yellow-450 flex items-center justify-center gap-2">Solution Revealed</span>}
                                 </h2>
 
                                 <p className="text-chess-text-secondary">
                                     {currentPuzzle.rating ? `Rating: ${currentPuzzle.rating}` : 'Unrated Puzzle'}
                                 </p>
 
-                                <div className="pt-4 w-full">
-                                    <button
-                                        onClick={() => loadNextPuzzle(false)}
-                                        className="w-full py-4 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
-                                    >
-                                        <ArrowRight /> {isOneTime && (currentSessionIndex + 1 === sessionQueue.length) ? 'Finish Session' : 'Next Puzzle'}
-                                    </button>
+                                {status === 'solution_revealed' && (
+                                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-sm font-semibold text-white">
+                                        Solution: <span className="text-chess-accent font-mono font-bold tracking-wider">{currentPuzzle.correctMove.substring(0, 2)} → {currentPuzzle.correctMove.substring(2, 4)}</span>
+                                    </div>
+                                )}
+
+                                {/* Action Buttons Panel */}
+                                <div className="w-full space-y-3 pt-2">
+                                    {status === 'active' && (
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleHint}
+                                                className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-sm"
+                                            >
+                                                <HelpCircle size={16} className="text-amber-400 animate-pulse" />
+                                                Get Hint
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleShowSolution}
+                                                className="flex-1 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-405 rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-sm"
+                                            >
+                                                <Eye size={16} />
+                                                Show Solution
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {(status === 'failure' || status === 'solution_revealed') && (
+                                        <button
+                                            type="button"
+                                            onClick={handleDoAgain}
+                                            className="w-full py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all text-sm"
+                                        >
+                                            <RotateCcw size={16} className="text-chess-accent" />
+                                            Try Again (Do Again)
+                                        </button>
+                                    )}
+
+                                    {(status === 'success' || status === 'failure' || status === 'solution_revealed') && (
+                                        <button
+                                            onClick={() => loadNextPuzzle(false)}
+                                            className="w-full py-4 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
+                                        >
+                                            <ArrowRight /> {isOneTime && (currentSessionIndex + 1 === sessionQueue.length) ? 'Finish Session' : 'Next Puzzle'}
+                                        </button>
+                                    )}
                                 </div>
                             </>
                         ) : (
                             <div className="text-chess-text-secondary">
                                 <Target size={48} className="mx-auto mb-4 opacity-50" />
-                                <p>No puzzles found. Analyze some games first!</p>
+                                <p>No puzzles found. Analyse some games first!</p>
                             </div>
                         )}
                     </div>
