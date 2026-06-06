@@ -954,3 +954,40 @@ export async function clearPlaylist(userId, playlistIndex) {
     }
 }
 
+/**
+ * Save a custom manually ingested puzzle
+ * 
+ * @param {string} userId - Firebase Auth UID
+ * @param {Object} puzzle - Puzzle data (fen, correctMove, customName, opening, userColor, isFavorite)
+ */
+export async function saveCustomPuzzle(userId, puzzle) {
+    const puzzleRef = doc(collection(db, 'puzzles'));
+    
+    await setDoc(puzzleRef, {
+        fen: puzzle.fen,
+        correctMove: puzzle.correctMove,
+        customName: puzzle.customName || 'Custom Position',
+        opening: puzzle.opening || 'Custom Analysis',
+        theme: puzzle.theme || 'Custom Ingestion',
+        userColor: puzzle.userColor || 'white',
+        type: 'custom',
+        userId,
+        isFavorite: puzzle.isFavorite || false,
+        playlistIndex: puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0, // defaults to Playlist 1
+        status: 'new',
+        createdAt: serverTimestamp(),
+        reviewState: {
+            isSolved: false,
+            attempts: 0,
+            lastAttempt: null,
+            successCount: 0,
+            failCount: 0
+        }
+    });
+
+    // Enforce limits and rotate oldest to next playlists (max 20 each)
+    await enforcePlaylistLimits(userId);
+    return puzzleRef.id;
+}
+
+

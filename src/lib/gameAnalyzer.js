@@ -14,9 +14,10 @@ export class GameAnalyzer {
      * Analyzes a single game for tactical mistakes at critical junctures.
      * @param {Object} game - Game object from Lichess (with pgn).
      * @param {string} playerColor - 'white' or 'black'.
+     * @param {number} engineDepth - Stockfish evaluation depth setting.
      * @returns {Promise<Array>} - Array of found puzzles.
      */
-    async analyze(game, playerColor) {
+    async analyze(game, playerColor, engineDepth = 14) {
         const chess = new Chess();
         const puzzles = [];
 
@@ -82,10 +83,10 @@ export class GameAnalyzer {
                 // --- ANALYSIS ---
 
                 // 1. Pre-Move Analysis (Best Move)
-                const preMoveAnalysis = await engineService.evaluatePosition(fenBefore, 15);
+                const preMoveAnalysis = await engineService.evaluatePosition(fenBefore, engineDepth + 1);
 
                 // 2. Post-Move Analysis (User Accuracy)
-                const postMoveAnalysis = await engineService.evaluatePosition(fenAfter, 12);
+                const postMoveAnalysis = await engineService.evaluatePosition(fenAfter, Math.max(10, engineDepth - 2));
                 const userMoveScore = -postMoveAnalysis.score;
 
                 // 3. Loss Calculation

@@ -15,7 +15,12 @@ import {
     setDoc,
     updateDoc,
     serverTimestamp,
-    increment
+    increment,
+    collection,
+    query,
+    where,
+    getDocs,
+    deleteDoc
 } from 'firebase/firestore';
 
 
@@ -41,6 +46,8 @@ export async function initializeUserProfile(user) {
         email: user.email,
         displayName: user.displayName || 'Player',
         photoUrl: user.photoURL || null,
+        country: '',
+        flair: '',
         onboardingCompleted: false,
 
         // Lichess Integration (initially empty)
@@ -63,7 +70,8 @@ export async function initializeUserProfile(user) {
             theme: 'dark',
             minElo: 1000,
             autoAnalyze: false,
-            notificationsEnabled: true
+            boardTheme: 'classic',
+            pieceSet: 'cburnett'
         },
 
         // Metadata
@@ -124,6 +132,20 @@ export async function linkLichessAccount(userId, lichessUsername) {
     await updateDoc(userRef, {
         lichessUsername: lichessUsername.trim(),
         lichessConnectedAt: serverTimestamp()
+    });
+}
+
+/**
+ * Disconnect Lichess account from user profile
+ * 
+ * @param {string} userId - Firebase Auth UID
+ * @returns {Promise<void>}
+ */
+export async function disconnectLichessAccount(userId) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+        lichessUsername: '',
+        lichessConnectedAt: null
     });
 }
 
@@ -278,4 +300,88 @@ export async function getLichessUsername(userId) {
     }
 
     return userSnap.data()?.lichessUsername || null;
+}
+
+/**
+ * Verify if a Lichess username exists by calling the Lichess public API.
+ * 
+ * @param {string} username - Lichess username to verify
+ * @returns {Promise<{valid: boolean, profile?: object}>}
+ */
+export async function verifyLichessUsername(username) {
+    if (!username || !username.trim()) {
+        return { valid: false };
+    }
+
+    try {
+        const response = await fetch(`https://lichess.org/api/user/${encodeURIComponent(username.trim())}`, {
+            headers: { 'Accept': 'application/json' }
+        });
+
+        if (response.ok) {
+            const profile = await response.json();
+            return { valid: true, profile };
+        }
+        return { valid: false };
+    } catch (error) {
+        console.warn('Lichess verification failed:', error);
+        return { valid: false };
+    }
+}
+
+/**
+ * Update user profile fields (displayName, country, flair, etc.)
+ * 
+ * @param {string} userId - Firebase Auth UID
+ * @param {Object} profileData - Profile data to update
+ * @returns {Promise<void>}
+ */
+export async function updateUserProfile(userId, profileData) {
+    const userRef = doc(db, 'users', userId);
+    const updates = {};
+
+    if (profileData.displayName !== undefined) updates.displayName = profileData.displayName;
+    if (profileData.country !== undefined) updates.country = profileData.country;
+    if (profileData.flair !== undefined) updates.flair = profileData.flair;
+    if (profileData.photoUrl !== undefined) updates.photoUrl = profileData.photoUrl;
+
+    await updateDoc(userRef, updates);
+}
+
+/**
+ * Clear ALL account data: puzzles, processed_games, playlists, and reset profile.
+ * Double-confirmation required on the UI side.
+ * 
+ * @param {string} userId - Firebase Auth UID
+ * @returns {Promise<{deletedPuzzles: number, deletedGames: number}>}
+ */
+export async function clearAllAccountData(userId) {
+    const userRef = doc(db, 'users', userId);
+
+    // Delete all puzzles
+    const puzzlesQ = query(collection(db, 'puzzles'), where('userId', '==', userId));
+    const puzzleSnap = await getDocs(puzzlesQ);
+    await Promise.all(puzzleSnap.docs.map(d => deleteDoc(d.ref)));
+
+    // Delete all processed_games
+    const gamesQ = query(collection(db, 'processed_games'), where('userId', '==', userId));
+    const gamesSnap = await getDocs(gamesQ);
+    await Promise.all(gamesSnap.docs.map(d => deleteDoc(d.ref)));
+
+    // Reset user profile to defaults
+    await updateDoc(userRef, {
+        lichessUsername: '',
+        lichessConnectedAt: null,
+        rotationCount: 0,
+        country: '',
+        flair: '',
+        'stats.totalSolved': 0,
+        'stats.streak': 0,
+        'stats.totalGamesAnalyzed': 0,
+        'settings.boardTheme': 'classic',
+        'settings.pieceSet': 'cburnett',
+        lastScan: null
+    });
+
+    return { deletedPuzzles: puzzleSnap.size, deletedGames: gamesSnap.size };
 }

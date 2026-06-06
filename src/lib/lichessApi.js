@@ -13,18 +13,19 @@ class LichessApiService {
    * @param {string} perfType - Comma separated list of game types (e.g., 'blitz,rapid,classical').
    * @returns {Promise<Array>} - Array of PGN data for the games.
    */
-  async fetchUserGames(username, max = 10, perfType = 'blitz,rapid,classical') {
+  async fetchUserGames(username, max = 10, perfType = 'blitz,rapid,classical', since = null) {
     try {
       // Endpoint to export games of a user
       // https://lichess.org/api/games/user/{username}
-      const response = await fetch(
-        `${this.baseUrl}/games/user/${username}?max=${max}&pgnInJson=true&opening=true&perfType=${perfType}`,
-        {
-          headers: {
-            'Accept': 'application/x-ndjson', // Ndjson is easier to parse game by game
-          },
-        }
-      );
+      let url = `${this.baseUrl}/games/user/${username}?max=${max}&pgnInJson=true&opening=true&perfType=${perfType}`;
+      if (since) {
+        url += `&since=${since}`;
+      }
+      const response = await fetch(url, {
+        headers: {
+          'Accept': 'application/x-ndjson', // Ndjson is easier to parse game by game
+        },
+      });
 
       if (!response.ok) {
         if (response.status === 404) {

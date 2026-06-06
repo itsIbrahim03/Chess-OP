@@ -10,7 +10,7 @@
  * 6. Mark games as processed
  */
 
-import { getLichessUsername } from './userService';
+import { getLichessUsername, getUserProfile } from './userService';
 import { saveNewPuzzles, isGameProcessed, markGameProcessed } from './puzzleService';
 import { lichessApi } from '../lib/lichessApi';
 import { gameAnalyzer } from '../lib/gameAnalyzer';
@@ -23,7 +23,13 @@ import { engineService } from './engineService';
  * @param {Function} onProgress - Callback for progress updates
  * @returns {Promise<Object>} Analysis results
  */
-export async function analyzeUserGames(userId, onProgress = () => { }) {
+export async function analyzeUserGames(userId, onProgress = () => { }, options = {}) {
+    const {
+        timeControls = ['blitz', 'rapid', 'classical'],
+        maxGames = 10,
+        dateRange = 'all' // '7', '30', '90', 'all'
+    } = options;
+
     const results = {
         gamesFetched: 0,
         gamesAnalyzed: 0,
@@ -39,9 +45,12 @@ export async function analyzeUserGames(userId, onProgress = () => { }) {
         // Wait for engine to be ready
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        // Step 1: Get Lichess username
+        // Step 1: Get user profile and settings
         onProgress({ stage: 'Fetching user profile...', progress: 0 });
-        const lichessUsername = await getLichessUsername(userId);
+        const profile = await getUserProfile(userId);
+        const lichessUsername = profile?.lichessUsername;
+        const minElo = profile?.settings?.minElo || 1000;
+        const engineDepth = profile?.settings?.engineDepth || 14;
 
         if (!lichessUsername) {
             throw new Error('No Lichess account linked. Please link your account in Settings.');
@@ -49,11 +58,27 @@ export async function analyzeUserGames(userId, onProgress = () => { }) {
 
         // Step 2: Fetch recent games from Lichess
         onProgress({ stage: `Fetching games for ${lichessUsername}...`, progress: 10 });
-        const games = await lichessApi.fetchUserGames(lichessUsername, 10); // Fetch 10 most recent
-        results.gamesFetched = games.length;
+        
+        let since = null;
+        if (dateRange !== 'all') {
+            const days = parseInt(dateRange, 10);
+            since = Date.now() - days * 24 * 60 * 60 * 1000;
+        }
+        const perfType = timeControls.join(',');
 
-        if (games.length === 0) {
-            onProgress({ stage: 'No games found', progress: 100 });
+        const games = await lichessApi.fetchUserGames(lichessUsername, maxGames, perfType, since);
+        
+        // Filter games based on user's minElo setting (at least one player must be >= minElo)
+        const filteredGames = games.filter(g => {
+            const wRating = g.players?.white?.rating || 0;
+            const bRating = g.players?.black?.rating || 0;
+            return wRating >= minElo || bRating >= minElo;
+        });
+
+        results.gamesFetched = filteredGames.length;
+
+        if (filteredGames.length === 0) {
+            onProgress({ stage: 'No games matching ELO filter found', progress: 100 });
             return results;
         }
 
@@ -61,7 +86,7 @@ export async function analyzeUserGames(userId, onProgress = () => { }) {
         onProgress({ stage: 'Checking for new games...', progress: 20 });
         const newGames = [];
 
-        for (const game of games) {
+        for (const game of filteredGames) {
             const gameId = game.id;
             const alreadyProcessed = await isGameProcessed(gameId);
 
@@ -93,7 +118,7 @@ export async function analyzeUserGames(userId, onProgress = () => { }) {
                 });
 
                 // Analyze game with Stockfish
-                const puzzles = await gameAnalyzer.analyze(game, lichessUsername === game.players?.white?.user?.name ? 'white' : 'black');
+                const puzzles = await gameAnalyzer.analyze(game, lichessUsername === game.players?.white?.user?.name ? 'white' : 'black', engineDepth);
 
                 if (puzzles && puzzles.length > 0) {
                     // Add gameId to each puzzle for tracking
@@ -157,7 +182,10 @@ export async function quickAnalyze(userId, onProgress = () => { }) {
         await new Promise(resolve => setTimeout(resolve, 500));
 
         onProgress({ stage: 'Fetching user profile...', progress: 0 });
-        const lichessUsername = await getLichessUsername(userId);
+        const profile = await getUserProfile(userId);
+        const lichessUsername = profile?.lichessUsername;
+        const minElo = profile?.settings?.minElo || 1000;
+        const engineDepth = profile?.settings?.engineDepth || 14;
 
         if (!lichessUsername) {
             throw new Error('No Lichess account linked');
@@ -165,13 +193,22 @@ export async function quickAnalyze(userId, onProgress = () => { }) {
 
         onProgress({ stage: 'Fetching recent game...', progress: 20 });
         const games = await lichessApi.fetchUserGames(lichessUsername, 1); // Just 1 game
-        results.gamesFetched = games.length;
+        
+        // Filter games based on user's minElo setting (at least one player must be >= minElo)
+        const filteredGames = games.filter(g => {
+            const wRating = g.players?.white?.rating || 0;
+            const bRating = g.players?.black?.rating || 0;
+            return wRating >= minElo || bRating >= minElo;
+        });
 
-        if (games.length === 0) {
+        results.gamesFetched = filteredGames.length;
+
+        if (filteredGames.length === 0) {
+            onProgress({ stage: 'Game skipped due to ELO filter settings', progress: 100 });
             return results;
         }
 
-        const game = games[0];
+        const game = filteredGames[0];
         const gameId = game.id;
 
         // Check if already processed
@@ -183,7 +220,7 @@ export async function quickAnalyze(userId, onProgress = () => { }) {
         }
 
         onProgress({ stage: 'Analyzing game...', progress: 50 });
-        const puzzles = await gameAnalyzer.analyze(game, lichessUsername === game.players?.white?.user?.name ? 'white' : 'black');
+        const puzzles = await gameAnalyzer.analyze(game, lichessUsername === game.players?.white?.user?.name ? 'white' : 'black', engineDepth);
 
         if (puzzles && puzzles.length > 0) {
             const puzzlesWithGameId = puzzles.map(puzzle => ({
