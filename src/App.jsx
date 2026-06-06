@@ -5,10 +5,10 @@ import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
 import Repertoire from "./pages/Repertoire";
 import Settings from "./pages/Settings";
-import GameAnalysis from "./pages/GameAnalysis";
 import TrainingArena from "./pages/TrainingArena";
 import ChessgroundTest from "./pages/ChessgroundTest";
 import Onboarding from "./pages/Onboarding";
+import AnalysisBoard from "./pages/AnalysisBoard";
 
 // Wrapper component that redirects to login if user is not authenticated
 // This protects routes that require login
@@ -62,13 +62,14 @@ export default function App() {
             }
           />
           <Route
-            path="/dashboard/analyze"
+            path="/dashboard/analysis-board"
             element={
               <ProtectedRoute>
-                <GameAnalysis />
+                <AnalysisBoard />
               </ProtectedRoute>
             }
           />
+
           <Route
             path="/dashboard/train"
             element={
