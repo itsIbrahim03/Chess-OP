@@ -1,88 +1,100 @@
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { Chessground } from 'chessground';
-import { Chess } from 'chess.js';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '../components/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
 import { getUserProfile } from '../services/userService';
-import { getBoardTheme } from '../lib/boardThemes';
-import { getPieceSet } from '../lib/pieceSets';
-import { engineService } from '../services/engineService';
+import { Chess } from 'chess.js';
 import {
-    Play, Pause, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-    RotateCcw, Upload, FileText, Search, ShieldAlert, Cpu, Sparkles, HelpCircle, Star, Save,
-    Clock, Calendar, Hash, Home, AlertCircle, XCircle, CheckCircle, ArrowRight, History
+    Cpu, Sparkles, AlertCircle, CheckCircle, XCircle, Home,
+    Zap, Flame, Clock, Calendar, Hash, Save, Upload, FileText, Search, Play,
+    ChevronDown, Folder
 } from 'lucide-react';
-import { saveCustomPuzzle } from '../services/puzzleService';
-import { analyzeUserGames } from '../services/analysisOrchestrator';
-
-// Import chessground CSS
-import 'chessground/assets/chessground.base.css';
-import 'chessground/assets/chessground.brown.css';
-import 'chessground/assets/chessground.cburnett.css';
+import { saveCustomPuzzle, getUserPlaylists } from '../services/puzzleService';
+import { backgroundAnalysisService } from '../services/backgroundAnalysisService';
+import { getPieceImageUrl } from '../lib/pieceSets';
+import { engineService } from '../services/engineService';
 
 export default function AnalysisBoard() {
     const { user } = useAuth();
     const navigate = useNavigate();
-    const location = useLocation();
     
-    // Tab State
-    const [activeAnalysisTab, setActiveAnalysisTab] = useState(location.state?.activeTab || 'ingest');
-    const [sidebarTab, setSidebarTab] = useState('history'); // history | import | save
-
-    useEffect(() => {
-        if (location.state?.activeTab) {
-            setActiveAnalysisTab(location.state.activeTab);
-        }
-    }, [location.state]);
-    
-    // Board references
-    const boardRef = useRef(null);
-    const cgRef = useRef(null);
-    const chessRef = useRef(new Chess());
-    
-    // Settings & Personalization states
-    const [boardTheme, setBoardTheme] = useState(null);
-    const [pieceSet, setPieceSet] = useState(null);
-    const [userSettings, setUserSettings] = useState(null);
-
-    // Board states
-    const [fen, setFen] = useState(chessRef.current.fen());
-    const [orientation, setOrientation] = useState('white');
-    const [history, setHistory] = useState([]); // List of FEN states + move notation
-    const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
-    
-    // Tabs & Inputs
-    const [activeTab, setActiveTab] = useState('pgn'); // pgn | fen
-    const [fenInput, setFenInput] = useState('');
-    const [pgnInput, setPgnInput] = useState('');
-    const [importError, setImportError] = useState(null);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const playTimerRef = useRef(null);
-
-    // Custom Puzzle Saving state
-    const [savePuzzleColor, setSavePuzzleColor] = useState('white');
-    const [savePuzzleName, setSavePuzzleName] = useState('');
-    const [savePuzzleOpening, setSavePuzzleOpening] = useState('');
-    const [savePuzzleMove, setSavePuzzleMove] = useState('');
-    const [savePlaylistIdx, setSavePlaylistIdx] = useState('0'); // '0' | '1' | '2' | 'fav'
-    const [saveStatus, setSaveStatus] = useState({ type: '', text: '' });
-
-    // Engine states
-    const [engineEnabled, setEngineEnabled] = useState(true);
-    const [engineOutput, setEngineOutput] = useState([]); // Top PV lines
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
-
-    // Lichess Ingestion States
+    // Settings & Personalization
     const [lichessUsername, setLichessUsername] = useState('');
+    
+    // Ingestion States
     const [timeControls, setTimeControls] = useState(['blitz', 'rapid', 'classical']);
     const [dateRange, setDateRange] = useState('30'); // '7', '30', '90', 'all'
-    const [maxGames, setMaxGames] = useState(10); // 10, 20, 50
+    const [maxGames, setMaxGames] = useState(20); // 10, 20, 50
     const [analyzing, setAnalyzing] = useState(false);
     const [progress, setProgress] = useState({ stage: '', progress: 0 });
     const [results, setResults] = useState(null);
     const [ingestError, setIngestError] = useState(null);
 
+    // Manual Import States
+    const [importTab, setImportTab] = useState('fen'); // 'fen' | 'pgn'
+    const [fenInput, setFenInput] = useState('');
+    const [pgnInput, setPgnInput] = useState('');
+    const [savePuzzleColor, setSavePuzzleColor] = useState('white');
+    const [savePuzzleName, setSavePuzzleName] = useState('');
+    const [savePuzzleOpening, setSavePuzzleOpening] = useState('');
+    const [savePlaylistIdx, setSavePlaylistIdx] = useState('0'); // '0' | '1' | '2' | 'fav'
+    const [saveStatus, setSaveStatus] = useState({ type: '', text: '' });
+    const [pieceSet, setPieceSet] = useState('cburnett');
+    const [isPlaylistDropdownOpen, setIsPlaylistDropdownOpen] = useState(false);
+
+    // Playlists capacity states
+    const [playlistsSpace, setPlaylistsSpace] = useState({ total: 0, isFull: false });
+    const [availablePlaylists, setAvailablePlaylists] = useState([]);
+
+    // Subscribe to background service status
+    useEffect(() => {
+        const unsubscribe = backgroundAnalysisService.subscribe(state => {
+            setAnalyzing(state.isRunning);
+            if (state.isRunning) {
+                setProgress(state.progress);
+            } else {
+                if (state.results) setResults(state.results);
+                if (state.error) setIngestError(state.error);
+            }
+        });
+        return () => unsubscribe();
+    }, []);
+
+    // Load profile and playlist capacities on mount
+    useEffect(() => {
+        if (user?.uid) {
+            getUserProfile(user.uid).then(profile => {
+                setLichessUsername(profile?.lichessUsername || '');
+                if (profile?.settings?.pieceSet) {
+                    setPieceSet(profile.settings.pieceSet);
+                }
+            }).catch(() => {});
+
+            getUserPlaylists(user.uid).then(allPlaylists => {
+                const totalCurrent = allPlaylists
+                    .filter(pl => pl.playlistIndex <= 2)
+                    .reduce((sum, pl) => sum + pl.total, 0);
+                setPlaylistsSpace({
+                    total: totalCurrent,
+                    isFull: totalCurrent >= 60
+                });
+
+                const available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
+                    index: pl.playlistIndex,
+                    title: pl.title,
+                    total: pl.total
+                }));
+                setAvailablePlaylists(available);
+                if (available.length > 0) {
+                    setSavePlaylistIdx(available[0].index.toString());
+                } else {
+                    setSavePlaylistIdx('fav');
+                }
+            }).catch(err => console.error(err));
+        }
+    }, [user?.uid]);
+
+    // Handle Time Control selections
     const handleToggleTimeControl = (tc) => {
         if (timeControls.includes(tc)) {
             setTimeControls(timeControls.filter(item => item !== tc));
@@ -91,6 +103,7 @@ export default function AnalysisBoard() {
         }
     };
 
+    // Run Lichess scanner via Background Service
     const handleAnalyze = async () => {
         if (!lichessUsername) {
             setIngestError('No Lichess username linked. Please link your account first.');
@@ -100,1196 +113,673 @@ export default function AnalysisBoard() {
             setIngestError('Please select at least one Time Control to scan.');
             return;
         }
-
-        setAnalyzing(true);
-        setIngestError(null);
-        setResults(null);
-        setProgress({ stage: 'Starting analysis...', progress: 0 });
-
-        try {
-            const finalResults = await analyzeUserGames(
-                user.uid,
-                (progressUpdate) => {
-                    setProgress(progressUpdate);
-                    if (progressUpdate.results) {
-                        setResults(progressUpdate.results);
-                    }
-                },
-                {
-                    timeControls,
-                    dateRange,
-                    maxGames
-                }
-            );
-
-            setResults(finalResults);
-        } catch (err) {
-            console.error('Analysis failed:', err);
-            setIngestError(err.message || 'An error occurred during game scanning.');
-        } finally {
-            setAnalyzing(false);
-        }
-    };
-
-    // ─── 1. Load User Theme/Piece Set Customizations ────────────────────────
-    useEffect(() => {
-        if (user?.uid) {
-            getUserProfile(user.uid).then(profile => {
-                setUserSettings(profile.settings);
-                setBoardTheme(getBoardTheme(profile.settings?.boardTheme || 'classic'));
-                setPieceSet(getPieceSet(profile.settings?.pieceSet || 'cburnett'));
-                setLichessUsername(profile.lichessUsername || '');
-            }).catch(() => {
-                // Fallbacks
-                setBoardTheme(getBoardTheme('classic'));
-                setPieceSet(getPieceSet('cburnett'));
-            });
-
-
-        } else {
-            setBoardTheme(getBoardTheme('classic'));
-            setPieceSet(getPieceSet('cburnett'));
-        }
-    }, [user?.uid]);
-
-    useEffect(() => {
-        if (engineOutput.length > 0 && !savePuzzleMove) {
-            setSavePuzzleMove(engineOutput[0].moveUci || '');
-        }
-    }, [engineOutput, savePuzzleMove]);
-
-    // Reset move recommendation selection when FEN changes
-    useEffect(() => {
-        setSavePuzzleMove('');
-    }, [fen]);
-
-    const handleSavePuzzle = async () => {
-        if (!savePuzzleMove.trim()) {
-            setSaveStatus({ type: 'error', text: 'Please specify the correct move (e.g. e2e4)' });
+        if (playlistsSpace.isFull) {
+            setIngestError('Scan blocked: Your playlists are at full capacity (60/60). Please review or clear standard playlists first.');
             return;
         }
 
+        setIngestError(null);
+        setResults(null);
+        backgroundAnalysisService.start(user.uid, {
+            timeControls,
+            dateRange,
+            maxGames
+        });
+    };
+
+    // Save puzzle manually
+    const handleSavePuzzle = async () => {
+        let targetFen = '';
+
+        if (importTab === 'fen') {
+            if (!fenInput.trim()) {
+                setSaveStatus({ type: 'error', text: 'Please enter a FEN string' });
+                return;
+            }
+            try {
+                const testChess = new Chess(fenInput.trim());
+                targetFen = testChess.fen();
+            } catch {
+                setSaveStatus({ type: 'error', text: 'Invalid FEN string' });
+                return;
+            }
+        } else {
+            if (!pgnInput.trim()) {
+                setSaveStatus({ type: 'error', text: 'Please enter a PGN string' });
+                return;
+            }
+            try {
+                const testChess = new Chess();
+                testChess.loadPgn(pgnInput.trim());
+                targetFen = testChess.fen();
+            } catch {
+                setSaveStatus({ type: 'error', text: 'Invalid PGN string' });
+                return;
+            }
+        }
+
         try {
+            // Ensure targetFen turn matches savePuzzleColor
+            const fenParts = targetFen.split(' ');
+            if (fenParts[1] !== (savePuzzleColor === 'white' ? 'w' : 'b')) {
+                fenParts[1] = savePuzzleColor === 'white' ? 'w' : 'b';
+                fenParts[4] = '0';
+                fenParts[5] = '1';
+                targetFen = fenParts.join(' ');
+            }
+
+            // Validate position after turn sync
+            try {
+                const testChess = new Chess(targetFen);
+                if (testChess.isGameOver()) {
+                    setSaveStatus({ type: 'error', text: 'The position is already checkmate, stalemate, or drawn.' });
+                    return;
+                }
+            } catch {
+                setSaveStatus({ type: 'error', text: 'Invalid position for the selected turn color.' });
+                return;
+            }
+
+            setSaveStatus({ type: 'loading', text: 'Analyzing position...' });
+
+            // Let the engine calculate the best move
+            engineService.init();
+            const analysis = await engineService.evaluatePosition(targetFen, 12);
+            const calculatedMove = analysis?.bestMove;
+
+            if (!calculatedMove || calculatedMove === '(none)') {
+                setSaveStatus({ type: 'error', text: 'Engine failed to find a valid move for this position.' });
+                return;
+            }
+
             setSaveStatus({ type: 'loading', text: 'Saving puzzle...' });
             
             const isFav = savePlaylistIdx === 'fav';
             const playlistIndex = isFav ? 0 : parseInt(savePlaylistIdx, 10);
 
             await saveCustomPuzzle(user.uid, {
-                fen,
-                correctMove: savePuzzleMove.trim(),
+                fen: targetFen,
+                correctMove: calculatedMove,
                 customName: savePuzzleName.trim() || 'Custom Position',
-                opening: savePuzzleOpening.trim() || 'Custom Analysis',
+                opening: savePuzzleOpening.trim() || 'Custom Import',
                 theme: 'Custom Ingestion',
                 userColor: savePuzzleColor,
                 isFavorite: isFav,
                 playlistIndex
             });
 
-            setSaveStatus({ type: 'success', text: 'Puzzle saved successfully!' });
+            setSaveStatus({ type: 'success', text: `Puzzle saved successfully! Best move: ${calculatedMove}` });
             setSavePuzzleName('');
             setSavePuzzleOpening('');
-            setSavePuzzleMove('');
+            setFenInput('');
+            setPgnInput('');
             setTimeout(() => {
                 setSaveStatus({ type: '', text: '' });
-            }, 3000);
+            }, 4000);
         } catch (err) {
             console.error('Failed to save manual puzzle:', err);
             setSaveStatus({ type: 'error', text: `Failed to save: ${err.message}` });
         }
     };
 
-    // ─── 2. Initialize Stockfish Engine ─────────────────────────────────────
-    useEffect(() => {
-        engineService.init();
-        return () => {
-            engineService.terminate();
-        };
-    }, []);
-
-    // ─── 3. Chessground Legal Moves Calculator ──────────────────────────────
-    const getLegalMoves = useCallback(() => {
-        const dests = new Map();
-        chessRef.current.moves({ verbose: true }).forEach(move => {
-            if (!dests.has(move.from)) {
-                dests.set(move.from, []);
-            }
-            dests.get(move.from).push(move.to);
-        });
-        return dests;
-    }, []);
-
-    // ─── 4. Run Stockfish Analysis on current FEN ───────────────────────────
-    useEffect(() => {
-        if (!engineEnabled || !fen) {
-            setEngineOutput([]);
-            setIsAnalyzing(false);
-            engineService.sendCommand('stop'); // Stop calculations to free CPU
-            return;
-        }
-
-        // Initialize engine fresh
-        engineService.init();
-
-        setIsAnalyzing(true);
-        // Clear previous calculations
-        setEngineOutput([]);
-
-        // Send options to Stockfish
-        engineService.sendCommand('stop');
-        engineService.sendCommand('setoption name MultiPV value 3'); // Top 3 moves
-        engineService.sendCommand(`position fen ${fen}`);
-        engineService.sendCommand(`go depth ${userSettings?.engineDepth || 14}`);
-
-        const tempOutput = {};
-
-        const parseEngineOutput = (msg) => {
-            const message = typeof msg === 'string' ? msg : msg.data;
-            if (!message.startsWith('info') || !message.includes('multipv')) return;
-
-            // Extract depth, multipv rank, score type (cp or mate), score value, and pv line
-            const multipvMatch = message.match(/multipv (\d+)/);
-            if (!multipvMatch) return;
-            const rank = parseInt(multipvMatch[1], 10);
-
-            // Parse Evaluation
-            let scoreLabel = '0.00';
-            let numericScore = 0;
-            const cpMatch = message.match(/score cp (-?\d+)/);
-            const mateMatch = message.match(/score mate (-?\d+)/);
-
-            if (cpMatch) {
-                const cp = parseInt(cpMatch[1], 10);
-                numericScore = cp / 100;
-                // Reverse score if turn is Black (since Stockfish scores relative to side to move)
-                const isBlackTurn = chessRef.current.turn() === 'b';
-                const scoreSign = isBlackTurn ? -numericScore : numericScore;
-                scoreLabel = scoreSign > 0 ? `+${scoreSign.toFixed(2)}` : scoreSign.toFixed(2);
-            } else if (mateMatch) {
-                const mate = parseInt(mateMatch[1], 10);
-                numericScore = mate > 0 ? 1000 : -1000;
-                scoreLabel = `M${Math.abs(mate)}`;
-            }
-
-            // Parse PV Moves
-            const pvIndex = message.indexOf(' pv ');
-            if (pvIndex === -1) return;
-            const pvMoves = message.substring(pvIndex + 4).trim().split(' ');
-
-            // Convert first move to SAN for easy reading
-            let firstMoveSan = '';
-            if (pvMoves.length > 0) {
-                const tempChess = new Chess(fen);
-                const uciMove = pvMoves[0];
-                try {
-                    const from = uciMove.substring(0, 2);
-                    const to = uciMove.substring(2, 4);
-                    const promotion = uciMove.length > 4 ? uciMove.substring(4, 5) : undefined;
-                    const res = tempChess.move({ from, to, promotion });
-                    firstMoveSan = res ? res.san : uciMove;
-                } catch {
-                    firstMoveSan = uciMove;
-                }
-            }
-
-            // Store current best updates
-            tempOutput[rank] = {
-                rank,
-                moveUci: pvMoves[0],
-                moveSan: firstMoveSan,
-                scoreLabel,
-                scoreValue: numericScore,
-                line: pvMoves.slice(0, 5).join(' ') // Show first 5 moves of PV
-            };
-
-            // Update state with sorted output array
-            setEngineOutput(Object.values(tempOutput).sort((a, b) => a.rank - b.rank));
-        };
-
-        const unsubscribe = engineService.onMessage(parseEngineOutput);
-
-        return () => {
-            unsubscribe();
-            engineService.sendCommand('stop');
-        };
-    }, [fen, engineEnabled, userSettings?.engineDepth]);
-
-    // ─── 5. Chessground Move Callback ───────────────────────────────────────
-    const onMove = (orig, dest) => {
-        const chess = chessRef.current;
-        const moveObj = { from: orig, to: dest };
-        
-        // Handle Pawn Promotion auto-Queen
-        const isPawn = chess.get(orig)?.type === 'p';
-        const rank = dest[1];
-        if (isPawn && (rank === '8' || rank === '1')) {
-            moveObj.promotion = 'q';
-        }
-
-        try {
-            const move = chess.move(moveObj);
-            
-            // Build move log history
-            const newHistory = history.slice(0, currentMoveIndex + 1);
-            newHistory.push({
-                fen: chess.fen(),
-                san: move.san,
-                color: move.color
-            });
-
-            setHistory(newHistory);
-            setCurrentMoveIndex(newHistory.length - 1);
-            setFen(chess.fen());
-            setImportError(null);
-        } catch {
-            // Revert board to match chess.js state if move was invalid
-            if (cgRef.current) {
-                cgRef.current.set({ fen: chess.fen() });
-            }
-        }
-    };
-
-    // ─── 6. Initialize / Reconfigure Chessground ───────────────────────────
-    useEffect(() => {
-        if (!boardRef.current) return;
-
-        if (!cgRef.current) {
-            cgRef.current = Chessground(boardRef.current, {
-                fen: fen,
-                orientation: orientation,
-                turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
-                animation: { enabled: true, duration: 200 },
-                movable: {
-                    free: false,
-                    color: 'both',
-                    dests: getLegalMoves(),
-                    events: { after: onMove }
-                },
-                highlight: { lastMove: true, check: true }
-            });
-        } else {
-            cgRef.current.set({
-                fen: fen,
-                orientation: orientation,
-                turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
-                movable: { dests: getLegalMoves() }
-            });
-        }
-    }, [fen, orientation, getLegalMoves]);
-
-    // ─── 7. Navigation Actions ──────────────────────────────────────────────
-    const jumpToMove = (index) => {
-        if (index < -1 || index >= history.length) return;
-        
-        const targetFen = index === -1 ? new Chess().fen() : history[index].fen;
-        
-        // Update chess.js instance
-        chessRef.current = new Chess(targetFen);
-        
-        setCurrentMoveIndex(index);
-        setFen(targetFen);
-    };
-
-    const handleStepBack = () => jumpToMove(currentMoveIndex - 1);
-    const handleStepForward = () => jumpToMove(currentMoveIndex + 1);
-    const handleJumpToStart = () => jumpToMove(-1);
-    const handleJumpToEnd = () => jumpToMove(history.length - 1);
-    
-    const handleReset = () => {
-        setIsPlaying(false);
-        chessRef.current = new Chess();
-        setHistory([]);
-        setCurrentMoveIndex(-1);
-        setFen(chessRef.current.fen());
-        setImportError(null);
-    };
-
-    // Auto Play navigation
-    useEffect(() => {
-        if (isPlaying) {
-            playTimerRef.current = setInterval(() => {
-                if (currentMoveIndex < history.length - 1) {
-                    handleStepForward();
-                } else {
-                    setIsPlaying(false);
-                }
-            }, 1500);
-        } else {
-            if (playTimerRef.current) clearInterval(playTimerRef.current);
-        }
-
-        return () => {
-            if (playTimerRef.current) clearInterval(playTimerRef.current);
-        };
-    }, [isPlaying, currentMoveIndex, history.length]);
-
-    // Flip Board
-    const handleFlipBoard = () => {
-        setOrientation(prev => prev === 'white' ? 'black' : 'white');
-    };
-
-    // ─── 8. Position / Game Ingestion ───────────────────────────────────────
-    const handleLoadFen = () => {
-        if (!fenInput.trim()) return;
-        try {
-            const chess = new Chess(fenInput.trim());
-            chessRef.current = chess;
-            setHistory([]);
-            setCurrentMoveIndex(-1);
-            setFen(chess.fen());
-            setImportError(null);
-        } catch {
-            setImportError('Invalid FEN String. Check layout and ranks.');
-        }
-    };
-
-    const handleLoadPgn = () => {
-        if (!pgnInput.trim()) return;
-        try {
-            const chess = new Chess();
-            chess.loadPgn(pgnInput.trim());
-
-            // Build history list from PGN moves
-            const moves = chess.history({ verbose: true });
-            const pgnHistory = [];
-            const tempChess = new Chess();
-
-            moves.forEach(m => {
-                tempChess.move(m.san);
-                pgnHistory.push({
-                    fen: tempChess.fen(),
-                    san: m.san,
-                    color: m.color
-                });
-            });
-
-            chessRef.current = chess;
-            setHistory(pgnHistory);
-            setCurrentMoveIndex(pgnHistory.length - 1);
-            setFen(chess.fen());
-            setImportError(null);
-        } catch {
-            setImportError('Failed to parse PGN. Check move syntax and headers.');
-        }
-    };
-    // ─── 9. Compute Evaluation Score for Visual Gauge ───────────────────────
-    const topScore = engineOutput[0]?.scoreValue ?? 0;
-    const scorePercentage = useMemo(() => {
-        if (!engineEnabled || engineOutput.length === 0) return 50;
-        const label = engineOutput[0].scoreLabel;
-        if (label.startsWith('M')) {
-            return label.includes('-') ? 0 : 100;
-        }
-        const score = parseFloat(label);
-        if (isNaN(score)) return 50;
-        const clamped = Math.max(-5, Math.min(5, score));
-        return ((clamped + 5) / 10) * 100;
-    }, [engineOutput, engineEnabled]);
+    const selectedPlaylist = savePlaylistIdx === 'fav'
+        ? { title: 'Starred / Favorites', total: null }
+        : availablePlaylists.find(pl => pl.index.toString() === savePlaylistIdx);
 
     return (
         <DashboardLayout>
-            <div className="max-w-7xl mx-auto select-none">
+            <div className="max-w-7xl mx-auto pb-12 px-4 sm:px-6">
                 
-                {/* ─── Tab Switcher ────────────────────────────────────────────────── */}
-                <div className="flex border-b border-white/5 mb-8">
-                    <button
-                        onClick={() => { setActiveAnalysisTab('board'); setIngestError(null); }}
-                        className={`px-6 py-3.5 font-bold text-sm border-b-2 transition-all flex items-center gap-2 ${
-                            activeAnalysisTab === 'board'
-                                ? 'border-chess-accent text-white'
-                                : 'border-transparent text-chess-text-secondary hover:text-white'
-                        }`}
-                    >
-                        <Search size={16} className={activeAnalysisTab === 'board' ? 'text-chess-accent' : 'text-chess-text-secondary'} />
-                        Interactive Analysis Board
-                    </button>
-                    <button
-                        onClick={() => { setActiveAnalysisTab('ingest'); setIngestError(null); }}
-                        className={`px-6 py-3.5 font-bold text-sm border-b-2 transition-all flex items-center gap-2 ${
-                            activeAnalysisTab === 'ingest'
-                                ? 'border-chess-accent text-white'
-                                : 'border-transparent text-chess-text-secondary hover:text-white'
-                        }`}
-                    >
-                        <Upload size={16} className={activeAnalysisTab === 'ingest' ? 'text-chess-accent' : 'text-chess-text-secondary'} />
-                        Lichess Analyser
-                    </button>
-                </div>
-
-                {activeAnalysisTab === 'board' ? (
-                    /* ─── 1. INTERACTIVE BOARD TAB ──────────────────────────────────── */
-                    <div className="flex flex-col lg:flex-row gap-6 pb-12 h-full">
-                        
-                        {/* Board Column */}
-                        <div className="flex-1 flex flex-col gap-4">
-                            {/* Header */}
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h1 className="text-3xl font-serif font-bold text-white">Analysis Board</h1>
-                                    <p className="text-chess-text-secondary text-sm">Practice positions, analyse PGNs, and consult Stockfish</p>
-                                </div>
-                                <button
-                                    onClick={handleFlipBoard}
-                                    className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold transition-all text-xs flex items-center gap-1.5"
-                                >
-                                    Flip Board 🔄
-                                </button>
-                            </div>
-
-                            {/* Chessground Board wrapper */}
-                            <div className="w-full flex-1 min-h-[400px] lg:min-h-[500px] flex items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl relative gap-4">
-                                {/* Dynamic Custom Styles */}
-                                {boardTheme && pieceSet && (
-                                    <style>{`
-                                        .cg-wrap piece.white.pawn { background-image: url('${pieceSet.pieces.w.p}') !important; }
-                                        .cg-wrap piece.white.knight { background-image: url('${pieceSet.pieces.w.n}') !important; }
-                                        .cg-wrap piece.white.bishop { background-image: url('${pieceSet.pieces.w.b}') !important; }
-                                        .cg-wrap piece.white.rook { background-image: url('${pieceSet.pieces.w.r}') !important; }
-                                        .cg-wrap piece.white.queen { background-image: url('${pieceSet.pieces.w.q}') !important; }
-                                        .cg-wrap piece.white.king { background-image: url('${pieceSet.pieces.w.k}') !important; }
-                                        .cg-wrap piece.black.pawn { background-image: url('${pieceSet.pieces.b.p}') !important; }
-                                        .cg-wrap piece.black.knight { background-image: url('${pieceSet.pieces.b.n}') !important; }
-                                        .cg-wrap piece.black.bishop { background-image: url('${pieceSet.pieces.b.b}') !important; }
-                                        .cg-wrap piece.black.rook { background-image: url('${pieceSet.pieces.b.r}') !important; }
-                                        .cg-wrap piece.black.queen { background-image: url('${pieceSet.pieces.b.q}') !important; }
-                                        .cg-wrap piece.black.king { background-image: url('${pieceSet.pieces.b.k}') !important; }
-                                        .cg-wrap square.white { background-color: ${boardTheme.lightSquare} !important; }
-                                        .cg-wrap square.black { background-color: ${boardTheme.darkSquare} !important; }
-                                        .cg-wrap coords { display: ${userSettings?.showCoordinates === false ? 'none' : 'block'} !important; }
-                                    `}</style>
-                                )}
-
-                                {/* Real-time Evaluation Bar */}
-                                {engineEnabled && (
-                                    <div className="w-3.5 h-[360px] sm:h-[450px] bg-zinc-700 rounded-full relative overflow-hidden border border-white/10 shrink-0 hidden sm:block">
-                                        <div 
-                                            className="absolute bottom-0 w-full bg-white transition-all duration-700 ease-out" 
-                                            style={{ height: `${scorePercentage}%` }}
-                                        />
-                                        {/* Center marker */}
-                                        <div className="absolute top-1/2 left-0 w-full h-[1px] bg-red-500/50" />
-                                    </div>
-                                )}
-
-                                {/* Chessground Container */}
-                                <div
-                                    ref={boardRef}
-                                    className="w-full max-w-[450px] aspect-square rounded-xl shadow-2xl overflow-hidden"
-                                />
-                            </div>
+                {/* Header Block */}
+                <div className="mb-10 text-left relative">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-chess-accent/10 rounded-full blur-3xl pointer-events-none -z-10" />
+                    <div className="flex items-center gap-3.5 mb-2.5">
+                        <div className="w-11 h-11 rounded-2xl bg-chess-accent/15 border border-chess-accent/20 flex items-center justify-center text-chess-accent shadow-lg shadow-chess-accent/5">
+                            <Cpu size={22} className="animate-pulse" />
                         </div>
-
-                        {/* Sidebar Column */}
-                        <div className="w-full lg:w-[420px] flex flex-col gap-4 shrink-0">
-                            
-                            {/* Stockfish Engine Panel */}
-                            <div className="bg-chess-panel border border-white/5 p-5 rounded-2xl">
-                                <div className="flex justify-between items-center mb-4">
-                                    <div className="flex items-center gap-2">
-                                        <Cpu className="text-chess-accent" size={20} />
-                                        <h2 className="font-bold text-white text-base">Engine Analysis</h2>
-                                    </div>
-                                    <button
-                                        onClick={() => setEngineEnabled(prev => !prev)}
-                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                                            engineEnabled 
-                                                ? 'bg-chess-accent/10 border border-chess-accent/30 text-chess-accent'
-                                                : 'bg-white/5 border border-white/10 text-chess-text-secondary'
-                                        }`}
-                                    >
-                                        {engineEnabled ? 'Active' : 'Disabled'}
-                                    </button>
-                                </div>
-
-                                {engineEnabled ? (
-                                    <div className="space-y-4">
-                                        {/* Current Score */}
-                                        <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 px-4 py-3 rounded-xl">
-                                            <span className="text-xs text-chess-text-secondary font-bold">EVALUATION</span>
-                                            {isAnalyzing && engineOutput.length === 0 ? (
-                                                <div className="flex items-center gap-1.5 text-xs text-chess-text-secondary">
-                                                    <div className="w-2.5 h-2.5 border border-chess-accent border-t-transparent animate-spin rounded-full" />
-                                                    Analysing...
-                                                </div>
-                                            ) : (
-                                                <span className={`text-base font-mono font-bold ${topScore >= 0 ? 'text-white' : 'text-red-400'}`}>
-                                                    {engineOutput[0]?.scoreLabel || '0.00'}
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        {/* MultiPV Suggestions List */}
-                                        <div className="space-y-2">
-                                            <span className="text-[10px] text-chess-text-secondary uppercase tracking-widest font-bold">TOP ENGINE RECOMMENDATIONS</span>
-                                            {engineOutput.length === 0 ? (
-                                                <p className="text-xs text-chess-text-secondary py-3 text-center bg-white/[0.01] rounded-xl border border-white/5">
-                                                    {isAnalyzing ? 'Evaluating moves...' : 'Engine idle.'}
-                                                </p>
-                                            ) : (
-                                                engineOutput.map(out => (
-                                                    <div 
-                                                        key={out.rank}
-                                                        className="flex items-center justify-between p-3 bg-white/[0.02] hover:bg-white/[0.04] border border-white/5 rounded-xl text-xs transition-colors cursor-pointer group"
-                                                        onClick={() => {
-                                                            const from = out.moveUci.substring(0, 2);
-                                                            const to = out.moveUci.substring(2, 4);
-                                                            onMove(from, to);
-                                                        }}
-                                                        title="Click to play move on board"
-                                                    >
-                                                        <div className="flex items-center gap-3">
-                                                            <span className="w-5 h-5 rounded-md bg-chess-accent/15 border border-chess-accent/20 text-chess-accent font-bold flex items-center justify-center text-[10px]">
-                                                                {out.rank}
-                                                            </span>
-                                                            <span className="font-bold text-white group-hover:text-chess-accent transition-colors font-mono text-sm">
-                                                                {out.moveSan}
-                                                            </span>
-                                                            <span className="text-chess-text-secondary font-mono text-[11px] truncate max-w-[160px]">
-                                                                {out.line}...
-                                                            </span>
-                                                        </div>
-                                                        <span className={`font-mono font-bold ${out.scoreValue >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                            {out.scoreLabel}
-                                                        </span>
-                                                    </div>
-                                                ))
-                                            )}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="text-center py-6 border border-dashed border-white/10 rounded-xl text-chess-text-secondary text-xs">
-                                        CONSULT ENGINE TO VIEW EVALUATIONS
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Consolidated Control Panel */}
-                            <div className="bg-chess-panel border border-white/5 rounded-2xl flex flex-col h-[480px] overflow-hidden">
-                                {/* Tab Switcher */}
-                                <div className="flex border-b border-white/5 bg-white/[0.01]">
-                                    <button
-                                        type="button"
-                                        onClick={() => setSidebarTab('history')}
-                                        className={`flex-1 py-3 font-bold text-xs flex items-center justify-center gap-1.5 border-b-2 transition-all ${
-                                            sidebarTab === 'history'
-                                                ? 'border-chess-accent text-chess-accent bg-white/[0.02]'
-                                                : 'border-transparent text-chess-text-secondary hover:text-white'
-                                        }`}
-                                    >
-                                        <History size={14} /> Move Log
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSidebarTab('import')}
-                                        className={`flex-1 py-3 font-bold text-xs flex items-center justify-center gap-1.5 border-b-2 transition-all ${
-                                            sidebarTab === 'import'
-                                                ? 'border-chess-accent text-chess-accent bg-white/[0.02]'
-                                                : 'border-transparent text-chess-text-secondary hover:text-white'
-                                        }`}
-                                    >
-                                        <Upload size={14} /> Import
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setSidebarTab('save')}
-                                        className={`flex-1 py-3 font-bold text-xs flex items-center justify-center gap-1.5 border-b-2 transition-all ${
-                                            sidebarTab === 'save'
-                                                ? 'border-chess-accent text-chess-accent bg-white/[0.02]'
-                                                : 'border-transparent text-chess-text-secondary hover:text-white'
-                                        }`}
-                                    >
-                                        <Save size={14} /> Save Puzzle
-                                    </button>
-                                </div>
-
-                                {/* Tab Body */}
-                                <div className="p-5 flex-1 flex flex-col min-h-0 justify-between">
-                                    {sidebarTab === 'history' && (
-                                        <div className="flex-1 flex flex-col min-h-0">
-                                            <div className="flex items-center justify-between mb-3 shrink-0">
-                                                <span className="text-[10px] text-chess-text-secondary uppercase tracking-widest font-bold">Move Log</span>
-                                                {history.length > 0 && (
-                                                    <button 
-                                                        onClick={handleReset}
-                                                        className="text-xs text-red-400 hover:text-red-300 font-bold transition-colors"
-                                                    >
-                                                        Clear Board
-                                                    </button>
-                                                )}
-                                            </div>
-
-                                            {history.length === 0 ? (
-                                                <div className="flex-1 flex items-center justify-center text-center text-xs text-chess-text-secondary">
-                                                    Drag pieces to make moves and record history
-                                                </div>
-                                            ) : (
-                                                <div className="flex-1 overflow-y-auto max-h-56 grid grid-cols-2 gap-x-6 gap-y-1.5 pr-2 py-2 scrollbar-thin">
-                                                    {Array.from({ length: Math.ceil(history.length / 2) }).map((_, i) => {
-                                                        const moveNum = i + 1;
-                                                        const wIdx = i * 2;
-                                                        const bIdx = i * 2 + 1;
-
-                                                        return (
-                                                            <div key={i} className="flex items-center gap-2 text-xs font-mono">
-                                                                <span className="text-chess-text-secondary w-6 text-right shrink-0">{moveNum}.</span>
-                                                                
-                                                                {/* White move */}
-                                                                <button 
-                                                                    onClick={() => jumpToMove(wIdx)}
-                                                                    className={`px-1.5 py-0.5 rounded transition-all font-bold ${
-                                                                        currentMoveIndex === wIdx 
-                                                                            ? 'bg-chess-accent text-white' 
-                                                                            : 'text-white hover:bg-white/5'
-                                                                    }`}
-                                                                >
-                                                                    {history[wIdx].san}
-                                                                </button>
-
-                                                                {/* Black move if exists */}
-                                                                {bIdx < history.length && (
-                                                                    <button 
-                                                                        onClick={() => jumpToMove(bIdx)}
-                                                                        className={`px-1.5 py-0.5 rounded transition-all font-bold ${
-                                                                            currentMoveIndex === bIdx 
-                                                                                ? 'bg-chess-accent text-white' 
-                                                                                : 'text-white hover:bg-white/5'
-                                                                        }`}
-                                                                    >
-                                                                        {history[bIdx].san}
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            )}
-
-                                            {/* Navigation Panel */}
-                                            <div className="flex justify-center items-center gap-1 mt-4 pt-3 border-t border-white/5 shrink-0">
-                                                <button 
-                                                    onClick={handleJumpToStart} 
-                                                    disabled={currentMoveIndex === -1}
-                                                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-white disabled:opacity-30 disabled:hover:bg-white/5 transition-all"
-                                                    title="Jump to Start"
-                                                >
-                                                    <ChevronsLeft size={16} />
-                                                </button>
-                                                <button 
-                                                    onClick={handleStepBack} 
-                                                    disabled={currentMoveIndex === -1}
-                                                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-white disabled:opacity-30 disabled:hover:bg-white/5 transition-all"
-                                                    title="Step Back"
-                                                >
-                                                    <ChevronLeft size={16} />
-                                                </button>
-                                                <button 
-                                                    onClick={() => setIsPlaying(prev => !prev)}
-                                                    disabled={history.length === 0}
-                                                    className="p-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-lg disabled:opacity-30 disabled:hover:bg-chess-accent transition-all"
-                                                    title={isPlaying ? "Pause autoplay" : "Autoplay moves"}
-                                                >
-                                                    {isPlaying ? <Pause size={16} /> : <Play size={16} fill="currentColor" />}
-                                                </button>
-                                                <button 
-                                                    onClick={handleStepForward} 
-                                                    disabled={currentMoveIndex === history.length - 1}
-                                                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-white disabled:opacity-30 disabled:hover:bg-white/5 transition-all"
-                                                    title="Step Forward"
-                                                >
-                                                    <ChevronRight size={16} />
-                                                </button>
-                                                <button 
-                                                    onClick={handleJumpToEnd} 
-                                                    disabled={currentMoveIndex === history.length - 1}
-                                                    className="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-white disabled:opacity-30 disabled:hover:bg-white/5 transition-all"
-                                                    title="Jump to End"
-                                                >
-                                                    <ChevronsRight size={16} />
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {sidebarTab === 'import' && (
-                                        <div className="flex-1 flex flex-col justify-between">
-                                            <div>
-                                                <div className="flex border-b border-white/5 mb-4 select-none">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => { setActiveTab('pgn'); setImportError(null); }}
-                                                        className={`flex-1 pb-2 font-bold text-xs flex items-center justify-center gap-1.5 border-b-2 transition-all ${
-                                                            activeTab === 'pgn' 
-                                                                ? 'border-chess-accent text-chess-accent'
-                                                                : 'border-transparent text-chess-text-secondary hover:text-white'
-                                                        }`}
-                                                    >
-                                                        <FileText size={14} /> Import PGN
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => { setActiveTab('fen'); setImportError(null); }}
-                                                        className={`flex-1 pb-2 font-bold text-xs flex items-center justify-center gap-1.5 border-b-2 transition-all ${
-                                                            activeTab === 'fen' 
-                                                                ? 'border-chess-accent text-chess-accent'
-                                                                : 'border-transparent text-chess-text-secondary hover:text-white'
-                                                        }`}
-                                                    >
-                                                        <Search size={14} /> Import FEN
-                                                    </button>
-                                                </div>
-
-                                                {importError && (
-                                                    <div className="mb-4 bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-xl text-xs flex items-start gap-2">
-                                                        <ShieldAlert size={14} className="shrink-0 mt-0.5" />
-                                                        <span>{importError}</span>
-                                                    </div>
-                                                )}
-
-                                                {activeTab === 'pgn' ? (
-                                                    <div className="space-y-3">
-                                                        <textarea
-                                                            value={pgnInput}
-                                                            onChange={(e) => setPgnInput(e.target.value)}
-                                                            placeholder="Paste PGN text here (e.g. 1. e4 e5 2. Nf3 Nc6 ...)"
-                                                            className="w-full h-44 bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs p-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors scrollbar-thin resize-none"
-                                                        />
-                                                    </div>
-                                                ) : (
-                                                    <div className="space-y-3">
-                                                        <input
-                                                            type="text"
-                                                            value={fenInput}
-                                                            onChange={(e) => setFenInput(e.target.value)}
-                                                            placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                                                            className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
-                                                        />
-                                                    </div>
-                                                )}
-                                            </div>
-
-                                            <div className="pt-4">
-                                                {activeTab === 'pgn' ? (
-                                                    <button
-                                                        onClick={handleLoadPgn}
-                                                        disabled={!pgnInput.trim()}
-                                                        className="w-full py-2.5 bg-chess-accent hover:bg-chess-accent-hover disabled:opacity-50 disabled:hover:bg-chess-accent text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
-                                                    >
-                                                        <Upload size={14} /> Load Game PGN
-                                                    </button>
-                                                ) : (
-                                                    <button
-                                                        onClick={handleLoadFen}
-                                                        disabled={!fenInput.trim()}
-                                                        className="w-full py-2.5 bg-chess-accent hover:bg-chess-accent-hover disabled:opacity-50 disabled:hover:bg-chess-accent text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
-                                                    >
-                                                        <Upload size={14} /> Load Position FEN
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {sidebarTab === 'save' && (
-                                        <div className="flex-1 flex flex-col justify-between min-h-0">
-                                            <div className="flex-1 overflow-y-auto pr-1 space-y-4 scrollbar-thin">
-                                                {saveStatus.text && (
-                                                    <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
-                                                        saveStatus.type === 'success'
-                                                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-450'
-                                                            : saveStatus.type === 'error'
-                                                                ? 'bg-red-500/10 border-red-500/20 text-red-400'
-                                                                : 'bg-white/5 border-white/10 text-chess-text-secondary'
-                                                    }`}>
-                                                        <span>{saveStatus.text}</span>
-                                                    </div>
-                                                )}
-
-                                                {/* Puzzle Name */}
-                                                <div className="space-y-1">
-                                                    <label htmlFor="saveNameInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider">PUZZLE TITLE / DESCRIPTION</label>
-                                                    <input
-                                                        id="saveNameInput"
-                                                        type="text"
-                                                        value={savePuzzleName}
-                                                        onChange={(e) => setSavePuzzleName(e.target.value)}
-                                                        placeholder="e.g. Simple tactics check"
-                                                        className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
-                                                    />
-                                                </div>
-
-                                                {/* Opening / Group Name */}
-                                                <div className="space-y-1">
-                                                    <label htmlFor="saveOpeningInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider">OPENING / GROUP NAME</label>
-                                                    <input
-                                                        id="saveOpeningInput"
-                                                        type="text"
-                                                        value={savePuzzleOpening}
-                                                        onChange={(e) => setSavePuzzleOpening(e.target.value)}
-                                                        placeholder="e.g. Sicilian Defense"
-                                                        className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
-                                                    />
-                                                </div>
-
-                                                <div className="grid grid-cols-2 gap-4">
-                                                    {/* Side to Move */}
-                                                    <div className="space-y-1">
-                                                        <label htmlFor="saveColorSelect" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider">SIDE TO MOVE</label>
-                                                        <select
-                                                            id="saveColorSelect"
-                                                            value={savePuzzleColor}
-                                                            onChange={(e) => setSavePuzzleColor(e.target.value)}
-                                                            className="w-full bg-chess-bg border border-white/10 rounded-xl text-xs py-2 px-3 text-white focus:outline-none focus:border-chess-accent cursor-pointer"
-                                                        >
-                                                            <option value="white">White to Move</option>
-                                                            <option value="black">Black to Move</option>
-                                                        </select>
-                                                    </div>
-
-                                                    {/* Destination Group */}
-                                                    <div className="space-y-1">
-                                                        <label htmlFor="savePlaylistSelect" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider">ADD TO LIST</label>
-                                                        <select
-                                                            id="savePlaylistSelect"
-                                                            value={savePlaylistIdx}
-                                                            onChange={(e) => setSavePlaylistIdx(e.target.value)}
-                                                            className="w-full bg-chess-bg border border-white/10 rounded-xl text-xs py-2 px-3 text-white focus:outline-none focus:border-chess-accent cursor-pointer"
-                                                        >
-                                                            <option value="0">Playlist 1 (Recent)</option>
-                                                            <option value="1">Playlist 2 (History)</option>
-                                                            <option value="2">Playlist 3 (Archive)</option>
-                                                            <option value="fav">⭐ Starred / Favorites</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-
-                                                {/* Target Move */}
-                                                <div className="space-y-1">
-                                                    <label htmlFor="saveMoveInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider">CORRECT UCI MOVE (E.G. E2E4)</label>
-                                                    <div className="relative">
-                                                        <input
-                                                            id="saveMoveInput"
-                                                            type="text"
-                                                            value={savePuzzleMove}
-                                                            onChange={(e) => setSavePuzzleMove(e.target.value)}
-                                                            placeholder="e.g. e2e4"
-                                                            className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors font-mono"
-                                                        />
-                                                        {engineOutput.length > 0 && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => setSavePuzzleMove(engineOutput[0].moveUci || '')}
-                                                                className="absolute right-2 top-1/2 -translate-y-1/2 bg-chess-accent/15 border border-chess-accent/30 text-chess-accent text-[9px] font-bold px-2 py-1 rounded hover:bg-chess-accent/25 transition-colors"
-                                                                title="Pre-fill with top Stockfish recommendation"
-                                                            >
-                                                                Use Engine Best ({engineOutput[0].moveSan})
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="pt-4">
-                                                <button
-                                                    onClick={handleSavePuzzle}
-                                                    disabled={saveStatus.type === 'loading'}
-                                                    className="w-full py-2.5 bg-chess-accent hover:bg-chess-accent-hover text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-colors"
-                                                >
-                                                    <Save size={14} /> Save to Playlist
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
+                        <div>
+                            <h1 className="text-3xl sm:text-3.5xl font-serif font-bold text-white tracking-wide">Analysis Manager</h1>
+                            <p className="text-chess-text-secondary text-sm">Automate match scanning or ingest custom board states to build your repertoires.</p>
                         </div>
                     </div>
-                ) : (
-                    /* ─── 2. LICHESS ANALYSER TAB ──────────────────────────────────── */
-                    <div className="max-w-4xl mx-auto pb-12">
-                        {/* Header */}
-                        <div className="mb-8">
-                            <h1 className="text-3xl font-serif font-bold text-white mb-2">Lichess Analyser</h1>
-                            <p className="text-chess-text-secondary text-sm">
-                                Scan your Lichess matches to extract opening blunders and generate custom puzzles
-                            </p>
-                        </div>
+                </div>
 
-                        {/* Main Content */}
-                        {!analyzing && !results && (
-                            <div className="space-y-6">
-                                {/* Connection Warning / Status */}
-                                {!lichessUsername ? (
-                                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-amber-500/5">
-                                        <div className="flex items-start gap-3.5">
-                                            <div className="w-10 h-10 bg-amber-500/15 border border-amber-500/30 rounded-xl flex items-center justify-center shrink-0">
-                                                <AlertCircle className="text-amber-500" size={20} />
-                                            </div>
-                                            <div>
-                                                <h4 className="font-bold text-white mb-0.5">Lichess Account Required</h4>
-                                                <p className="text-sm text-chess-text-secondary">
-                                                    You need to link your Lichess account to fetch games. Link it in Settings first.
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={() => navigate('/dashboard/settings')}
-                                            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-amber-500/10 whitespace-nowrap"
-                                        >
-                                            Go to Settings
-                                        </button>
+                <div className="flex flex-col lg:flex-row gap-8">
+                    
+                    {/* LEFT COLUMN: Lichess Automatic Scanner */}
+                    <div className="flex-1 flex flex-col gap-6">
+                        
+                        {/* Connection Warning / Status */}
+                        {!lichessUsername && (
+                            <div className="bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-amber-500/5">
+                                <div className="flex items-start gap-4">
+                                    <div className="w-12 h-12 bg-amber-500/15 border border-amber-500/30 rounded-xl flex items-center justify-center shrink-0">
+                                        <AlertCircle className="text-amber-500" size={24} />
                                     </div>
-                                ) : (
-                                    <div className="bg-emerald-500/5 border border-emerald-500/25 rounded-2xl p-4 flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-8 h-8 rounded-full bg-emerald-500/15 border border-emerald-500/35 flex items-center justify-center text-emerald-400 font-bold text-xs">
-                                                ✓
-                                            </div>
-                                            <div>
-                                                <p className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider">LINKED LICHESS USERNAME</p>
-                                                <p className="text-white font-bold text-base">{lichessUsername}</p>
-                                            </div>
-                                        </div>
-                                        <button 
-                                            onClick={() => navigate('/dashboard/settings')}
-                                            className="text-xs font-semibold text-chess-text-secondary hover:text-white transition-colors"
-                                        >
-                                            Change Account
-                                        </button>
+                                    <div>
+                                        <h4 className="font-bold text-white mb-0.5">Lichess Account Required</h4>
+                                        <p className="text-sm text-chess-text-secondary">
+                                            You must link a Lichess username to run game scans. You can link your username in the Settings panel.
+                                        </p>
                                     </div>
-                                )}
-
-                                {/* Scanner Form Panel */}
-                                <div className="bg-chess-panel border border-white/5 rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden">
-                                    {/* Accent Glow */}
-                                    <div className="absolute top-0 right-0 w-64 h-64 bg-chess-accent/5 rounded-full blur-3xl pointer-events-none" />
-
-                                    <h3 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
-                                        <Cpu size={20} className="text-chess-accent" />
-                                        <span>Game scanning configuration</span>
-                                    </h3>
-
-                                    <div className="space-y-6">
-                                        {/* 1. Time Control Selection */}
-                                        <div className="space-y-2">
-                                            <label className="text-sm font-bold text-white flex items-center gap-2">
-                                                <Clock size={16} className="text-chess-accent" />
-                                                <span>Time Controls</span>
-                                            </label>
-                                            <p className="text-xs text-chess-text-secondary mb-3">Choose any combination of match types you want to ingest:</p>
-                                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                                {[
-                                                    { id: 'bullet', label: 'Bullet', desc: '≤ 2m', icon: '🔫' },
-                                                    { id: 'blitz', label: 'Blitz', desc: '3m - 7m', icon: '⚡' },
-                                                    { id: 'rapid', label: 'Rapid', desc: '8m - 15m', icon: '⏱️' },
-                                                    { id: 'classical', label: 'Classical', desc: '> 15m', icon: '🏛️' }
-                                                ].map(tc => {
-                                                    const isSelected = timeControls.includes(tc.id);
-                                                    return (
-                                                        <button
-                                                            key={tc.id}
-                                                            type="button"
-                                                            onClick={() => handleToggleTimeControl(tc.id)}
-                                                            className={`p-3 rounded-xl border-2 text-left transition-all ${
-                                                                isSelected
-                                                                    ? 'border-chess-accent bg-chess-accent/10 shadow-lg shadow-chess-accent/5'
-                                                                    : 'border-white/5 bg-black/20 hover:border-white/10'
-                                                            }`}
-                                                        >
-                                                            <span className="text-xl block mb-1">{tc.icon}</span>
-                                                            <span className="text-sm font-bold text-white block">{tc.label}</span>
-                                                            <span className="text-[10px] text-chess-text-secondary">{tc.desc}</span>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
-                                        </div>
-
-                                        {/* 2. Date Range and 3. Fetch Limit */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2">
-                                            {/* Date Range Selection */}
-                                            <div className="space-y-2">
-                                                <label htmlFor="dateRangeSelect" className="text-sm font-bold text-white flex items-center gap-2">
-                                                    <Calendar size={16} className="text-chess-accent" />
-                                                    <span>Date Range</span>
-                                                </label>
-                                                <select
-                                                    id="dateRangeSelect"
-                                                    value={dateRange}
-                                                    onChange={(e) => setDateRange(e.target.value)}
-                                                    className="w-full px-4 py-2.5 bg-chess-bg border border-white/10 rounded-xl text-white focus:outline-none focus:border-chess-accent transition-colors appearance-none cursor-pointer"
-                                                    style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7' /%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px' }}
-                                                >
-                                                    <option value="7">Last 7 Days</option>
-                                                    <option value="30">Last 30 Days (Recommended)</option>
-                                                    <option value="90">Last 90 Days</option>
-                                                    <option value="all">All Time / No Limit</option>
-                                                </select>
-                                            </div>
-
-                                            {/* Fetch Game Limit */}
-                                            <div className="space-y-2">
-                                                <label htmlFor="gameLimitSelect" className="text-sm font-bold text-white flex items-center gap-2">
-                                                    <Hash size={16} className="text-chess-accent" />
-                                                    <span>Maximum Games to Scan</span>
-                                                </label>
-                                                <select
-                                                    id="gameLimitSelect"
-                                                    value={maxGames}
-                                                    onChange={(e) => setMaxGames(parseInt(e.target.value))}
-                                                    className="w-full px-4 py-2.5 bg-chess-bg border border-white/10 rounded-xl text-white focus:outline-none focus:border-chess-accent transition-colors appearance-none cursor-pointer"
-                                                    style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white' stroke-width='2'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M19 9l-7 7-7-7' /%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center', backgroundSize: '16px' }}
-                                                >
-                                                    <option value="10">10 Recent Games</option>
-                                                    <option value="20">20 Recent Games</option>
-                                                    <option value="50">50 Recent Games</option>
-                                                </select>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Start Scanner Trigger */}
-                                    <button
-                                        onClick={handleAnalyze}
-                                        disabled={!lichessUsername || timeControls.length === 0}
-                                        className="mt-8 w-full py-4 bg-chess-accent hover:bg-chess-accent-hover disabled:bg-white/5 disabled:text-white/20 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-chess-accent/10 disabled:shadow-none hover:shadow-chess-accent/25 hover:-translate-y-0.5 disabled:cursor-not-allowed"
-                                    >
-                                        <Play size={18} fill="currentColor" />
-                                        Analyse Lichess Games
-                                    </button>
                                 </div>
+                                <button
+                                    onClick={() => navigate('/dashboard/settings')}
+                                    className="px-5 py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-amber-500/15 hover:-translate-y-0.5"
+                                >
+                                    Configure Lichess Link
+                                </button>
                             </div>
                         )}
 
-                        {/* Progress Indicator */}
-                        {analyzing && (
-                            <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 shadow-xl">
-                                <div className="flex items-center gap-4 mb-6">
-                                    <div className="w-10 h-10 border border-chess-accent border-t-transparent animate-spin rounded-full shrink-0" />
+                        {/* Scan Area Switcher (Configuration, Scanning, or Results) */}
+                        {analyzing ? (
+                            /* PROGRESS INDICATOR */
+                            <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 shadow-xl flex flex-col justify-center min-h-[350px] relative overflow-hidden">
+                                <div className="absolute -inset-px bg-gradient-to-r from-chess-accent/10 to-brand-med/10 rounded-3xl blur-[1px] -z-10" />
+                                <div className="flex items-center gap-5 mb-8">
+                                    <div className="w-14 h-14 border-2 border-chess-accent border-t-transparent animate-spin rounded-full shrink-0 flex items-center justify-center shadow-lg shadow-chess-accent/10">
+                                        <Cpu size={24} className="text-chess-accent animate-pulse" />
+                                    </div>
                                     <div>
-                                        <h3 className="text-xl font-bold text-white mb-1">Analysing Your Games</h3>
-                                        <p className="text-chess-text-secondary">{progress.stage}</p>
+                                        <h3 className="text-2xl font-bold text-white mb-1">Scanning Games</h3>
+                                        <p className="text-chess-text-secondary text-sm font-medium">{progress.stage}</p>
                                     </div>
                                 </div>
 
                                 {/* Progress Bar */}
-                                <div className="w-full bg-chess-bg rounded-full h-3.5 overflow-hidden border border-white/5">
+                                <div className="w-full bg-black/35 rounded-full h-4 overflow-hidden border border-white/5 p-0.5">
                                     <div
-                                        className="h-full bg-gradient-to-r from-chess-accent to-emerald-500 transition-all duration-300 rounded-full"
+                                        className="h-full bg-gradient-to-r from-chess-accent to-emerald-500 transition-all duration-300 rounded-full shadow-[0_0_12px_rgba(235,94,85,0.4)]"
                                         style={{ width: `${progress.progress}%` }}
                                     />
                                 </div>
-                                <p className="text-xs font-bold text-chess-text-secondary mt-2 text-right">
-                                    {Math.round(progress.progress)}%
-                                </p>
+                                <div className="flex justify-between text-xs font-bold text-chess-text-secondary mt-3 px-1">
+                                    <span className="uppercase tracking-wider text-[10px]">Stockfish centipawn analyzer active</span>
+                                    <span>{Math.round(progress.progress)}% Complete</span>
+                                </div>
                             </div>
-                        )}
-
-                        {/* Results */}
-                        {results && !analyzing && (
-                            <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 shadow-xl">
-                                <div className="flex items-center gap-3 mb-6">
-                                    <CheckCircle className="text-chess-status-success" size={32} />
-                                    <h3 className="text-2xl font-serif font-bold text-white">Analysis Complete!</h3>
+                        ) : results ? (
+                            /* SCAN RESULTS */
+                            <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 sm:p-10 shadow-xl relative overflow-hidden animate-in">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/[0.03] rounded-full blur-3xl pointer-events-none" />
+                                <div className="flex items-center gap-3.5 mb-8">
+                                    <div className="w-12 h-12 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/5">
+                                        <CheckCircle size={24} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-2xl font-bold text-white tracking-wide">Ingestion Complete</h3>
+                                        <p className="text-chess-text-secondary text-sm font-medium">Summary of parsed matches and newly generated puzzles</p>
+                                    </div>
                                 </div>
 
                                 {/* Stats Grid */}
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                                    <div className="bg-chess-bg p-4 rounded-xl border border-white/5">
-                                        <p className="text-xs text-chess-text-secondary mb-1">Games Fetched</p>
-                                        <p className="text-2xl font-bold text-white">{results.gamesFetched}</p>
+                                    <div className="bg-white/[0.02] p-5 rounded-2xl border border-white/5 flex flex-col justify-center transition-all duration-300 hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5">
+                                        <p className="text-[10px] text-chess-text-secondary font-extrabold uppercase tracking-widest mb-1.5">Games Fetched</p>
+                                        <p className="text-3.5xl font-mono font-extrabold text-white">{results.gamesFetched}</p>
                                     </div>
-                                    <div className="bg-chess-bg p-4 rounded-xl border border-white/5">
-                                        <p className="text-xs text-chess-text-secondary mb-1">Games Analysed</p>
-                                        <p className="text-2xl font-bold text-chess-accent">{results.gamesAnalyzed}</p>
+                                    <div className="bg-white/[0.02] p-5 rounded-2xl border border-white/5 flex flex-col justify-center transition-all duration-300 hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5">
+                                        <p className="text-[10px] text-chess-text-secondary font-extrabold uppercase tracking-widest mb-1.5">Games Analysed</p>
+                                        <p className="text-3.5xl font-mono font-extrabold text-chess-accent">{results.gamesAnalyzed}</p>
                                     </div>
-                                    <div className="bg-chess-bg p-4 rounded-xl border border-white/5">
-                                        <p className="text-xs text-chess-text-secondary mb-1">Puzzles Generated</p>
-                                        <p className="text-2xl font-bold text-chess-status-success">{results.puzzlesGenerated}</p>
+                                    <div className="bg-white/[0.02] p-5 rounded-2xl border border-white/5 flex flex-col justify-center transition-all duration-300 hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5">
+                                        <p className="text-[10px] text-chess-text-secondary font-extrabold uppercase tracking-widest mb-1.5">New Puzzles</p>
+                                        <p className="text-3.5xl font-mono font-extrabold text-emerald-450">{results.puzzlesGenerated}</p>
                                     </div>
-                                    <div className="bg-chess-bg p-4 rounded-xl border border-white/5">
-                                        <p className="text-xs text-chess-text-secondary mb-1">Already Processed</p>
-                                        <p className="text-2xl font-bold text-chess-text-secondary">{results.gamesSkipped}</p>
+                                    <div className="bg-white/[0.02] p-5 rounded-2xl border border-white/5 flex flex-col justify-center transition-all duration-300 hover:bg-white/[0.04] hover:border-white/10 hover:-translate-y-0.5">
+                                        <p className="text-[10px] text-chess-text-secondary font-extrabold uppercase tracking-widest mb-1.5">Skipped (Dupes)</p>
+                                        <p className="text-3.5xl font-mono font-extrabold text-white/50">{results.gamesSkipped}</p>
                                     </div>
                                 </div>
 
-                                {/* Errors */}
                                 {results.errors && results.errors.length > 0 && (
-                                    <div className="bg-chess-status-error/5 border border-chess-status-error/20 rounded-xl p-4 mb-6">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <XCircle className="text-chess-status-error" size={20} />
-                                            <p className="text-chess-status-error font-bold">Some games failed to analyse</p>
+                                    <div className="bg-red-500/5 border border-red-500/20 rounded-2xl p-4 mb-8 flex items-start gap-3">
+                                        <XCircle className="text-red-400 shrink-0 mt-0.5" size={18} />
+                                        <div>
+                                            <p className="text-sm font-bold text-white">Scanner warning</p>
+                                            <p className="text-xs text-chess-text-secondary mt-0.5">
+                                                {results.errors.length} game(s) had move errors or incomplete PGN data. They will be retried automatically in subsequent scans.
+                                            </p>
                                         </div>
-                                        <p className="text-xs text-chess-text-secondary">
-                                            {results.errors.length} game(s) encountered engine errors. They will be retried in your next scan.
-                                        </p>
                                     </div>
                                 )}
 
                                 {/* Actions */}
-                                <div className="flex flex-col sm:flex-row gap-3">
+                                <div className="flex flex-col sm:flex-row gap-4">
                                     <button
                                         onClick={() => navigate('/dashboard')}
-                                        className="flex-1 px-6 py-3 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
+                                        className="flex-1 py-3.5 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-chess-accent/15 cursor-pointer active:scale-[0.98] duration-200 hover:-translate-y-0.5"
                                     >
-                                        <Home size={18} />
-                                        Go to Dashboard
+                                        <Home size={16} />
+                                        Return to Dashboard
                                     </button>
                                     <button
                                         onClick={() => {
                                             setResults(null);
                                             setIngestError(null);
                                         }}
-                                        className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white rounded-xl font-bold transition-colors border border-white/10"
+                                        className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 text-white rounded-xl font-bold transition-all border border-white/10 flex items-center justify-center gap-2 cursor-pointer active:scale-[0.98] duration-200 hover:-translate-y-0.5"
                                     >
-                                        Ingest More Games
+                                        <Play size={16} fill="currentColor" />
+                                        Scan More Games
                                     </button>
                                 </div>
                             </div>
-                        )}
-
-                        {/* Error State */}
-                        {ingestError && !analyzing && (
-                            <div className="bg-chess-status-error/5 border border-chess-status-error/20 rounded-3xl p-8 shadow-xl">
-                                <div className="flex items-center gap-3 mb-4">
-                                    <XCircle className="text-chess-status-error" size={32} />
-                                    <h3 className="text-2xl font-bold text-white">Analysis Failed</h3>
+                        ) : ingestError ? (
+                            /* ERROR BLOCK */
+                            <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 shadow-xl relative overflow-hidden animate-in">
+                                <div className="absolute -inset-px bg-gradient-to-r from-red-500/10 to-transparent rounded-3xl blur-[1px] -z-10" />
+                                <div className="flex items-center gap-3.5 mb-6">
+                                    <div className="w-12 h-12 bg-red-500/15 border border-red-500/25 rounded-2xl flex items-center justify-center text-red-400">
+                                        <XCircle size={26} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-2xl font-bold text-white">Scanner Error</h3>
+                                        <p className="text-chess-text-secondary text-sm">The game ingestion scanner failed to finish</p>
+                                    </div>
                                 </div>
-                                <p className="text-chess-text-secondary mb-6">{ingestError}</p>
+                                <p className="text-chess-text-secondary text-sm mb-8 bg-red-500/5 border border-red-500/10 p-4 rounded-xl leading-relaxed font-mono text-xs">
+                                    {ingestError}
+                                </p>
                                 <button
                                     onClick={() => setIngestError(null)}
-                                    className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold transition-colors"
+                                    className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold transition-all"
                                 >
-                                    Dismiss and Try Again
+                                    Go Back
+                                </button>
+                            </div>
+                        ) : (
+                            /* CONFIGURATION CARD */
+                            <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 sm:p-10 shadow-xl relative overflow-hidden">
+                                <div className="absolute top-0 right-0 w-64 h-64 bg-chess-accent/[0.03] rounded-full blur-3xl pointer-events-none" />
+
+                                <h3 className="text-2.5xl font-bold font-serif text-white mb-8 flex items-center gap-3">
+                                    <Cpu size={24} className="text-chess-accent" />
+                                    <span>Lichess Scan Parameters</span>
+                                </h3>
+
+                                {playlistsSpace.isFull && (
+                                    <div className="mb-8 flex items-start gap-4 bg-red-500/10 border border-red-500/25 p-5 rounded-2xl text-red-400">
+                                        <AlertCircle size={22} className="shrink-0 mt-0.5" />
+                                        <div>
+                                            <h5 className="font-bold text-white text-base">Playlists Capacity Full (60/60 Puzzles)</h5>
+                                            <p className="text-sm text-chess-text-secondary mt-1">
+                                                Your training decks have reached their maximum combined limit of 60 puzzles. Please clear or master some puzzles to free up space before scanning new matches.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="space-y-8">
+                                    {/* 1. Time Control Picker */}
+                                    <div className="space-y-3">
+                                        <label className="text-base font-bold text-white flex items-center gap-2">
+                                            <Clock size={18} className="text-chess-accent" />
+                                            <span>Target Time Controls</span>
+                                        </label>
+                                        <p className="text-sm text-chess-text-secondary mb-4">Select the match formats you wish to scan for blunders:</p>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                            {[
+                                                { id: 'bullet', label: 'Bullet', icon: <Zap size={20} /> },
+                                                { id: 'blitz', label: 'Blitz', icon: <Flame size={20} /> },
+                                                { id: 'rapid', label: 'Rapid', icon: <Clock size={20} /> },
+                                                { id: 'classical', label: 'Classical', icon: <Cpu size={20} /> }
+                                            ].map(tc => {
+                                                const isSelected = timeControls.includes(tc.id);
+                                                return (
+                                                    <button
+                                                        key={tc.id}
+                                                        type="button"
+                                                        onClick={() => handleToggleTimeControl(tc.id)}
+                                                        className={`p-4 rounded-xl border transition-all text-center flex flex-col items-center justify-center gap-3 hover:scale-[1.02] cursor-pointer ${
+                                                            isSelected
+                                                                ? 'border-chess-accent bg-chess-accent/15 text-white shadow-md shadow-chess-accent/5'
+                                                                : 'border-white/5 bg-black/20 text-chess-text-secondary hover:border-white/10 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        <div className={isSelected ? 'text-chess-accent' : 'text-chess-text-secondary opacity-60'}>
+                                                            {tc.icon}
+                                                        </div>
+                                                        <span className="text-sm font-bold">{tc.label}</span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* 2. Custom Date Range Pill Selector */}
+                                    <div className="space-y-3 pt-3">
+                                        <label className="text-base font-bold text-white flex items-center gap-2">
+                                            <Calendar size={18} className="text-chess-accent" />
+                                            <span>Scan History Horizon</span>
+                                        </label>
+                                        <p className="text-sm text-chess-text-secondary mb-4">Filter games played within this timeframe:</p>
+                                        <div className="flex flex-wrap gap-2.5 p-2 bg-black/25 rounded-2xl border border-white/5 w-fit">
+                                            {[
+                                                { value: '7', label: '7 Days' },
+                                                { value: '30', label: '30 Days' },
+                                                { value: '90', label: '90 Days' },
+                                                { value: 'all', label: 'All Time' }
+                                            ].map(opt => {
+                                                const isSelected = dateRange === opt.value;
+                                                return (
+                                                    <button
+                                                        key={opt.value}
+                                                        type="button"
+                                                        onClick={() => setDateRange(opt.value)}
+                                                        className={`px-5 py-2.5 text-sm font-bold rounded-xl transition-all cursor-pointer ${
+                                                            isSelected
+                                                                ? 'bg-chess-accent text-white shadow-sm'
+                                                                : 'text-chess-text-secondary hover:text-white bg-transparent'
+                                                        }`}
+                                                    >
+                                                        {opt.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+
+                                    {/* 3. Custom Limit Selector */}
+                                    <div className="space-y-3 pt-3">
+                                        <label className="text-base font-bold text-white flex items-center gap-2">
+                                            <Hash size={18} className="text-chess-accent" />
+                                            <span>Scan Capacity Limit</span>
+                                        </label>
+                                        <p className="text-sm text-chess-text-secondary mb-4">Maximum number of games to analyze in this batch:</p>
+                                        <div className="flex flex-wrap gap-2.5 p-2 bg-black/25 rounded-2xl border border-white/5 w-fit">
+                                            {[
+                                                { value: 1, label: '1 Game' },
+                                                { value: 5, label: '5 Games' },
+                                                { value: 10, label: '10 Games' },
+                                                { value: 20, label: '20 Games' },
+                                                { value: 50, label: '50 Games' }
+                                            ].map(opt => {
+                                                const isSelected = maxGames === opt.value;
+                                                return (
+                                                    <button
+                                                        key={opt.value}
+                                                        type="button"
+                                                        onClick={() => setMaxGames(opt.value)}
+                                                        className={`px-5 py-2.5 text-sm font-bold rounded-xl transition-all cursor-pointer ${
+                                                            isSelected
+                                                                ? 'bg-chess-accent text-white shadow-sm'
+                                                                : 'text-chess-text-secondary hover:text-white bg-transparent'
+                                                        }`}
+                                                    >
+                                                        {opt.label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Scan trigger */}
+                                <button
+                                    onClick={handleAnalyze}
+                                    disabled={!lichessUsername || timeControls.length === 0 || playlistsSpace.isFull}
+                                    className="mt-10 w-full py-3.5 bg-chess-accent hover:bg-chess-accent-hover disabled:bg-white/5 disabled:to-white/5 disabled:text-white/20 text-white text-sm rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-md shadow-chess-accent/15 disabled:shadow-none hover:-translate-y-0.5 disabled:cursor-not-allowed cursor-pointer active:scale-[0.98] duration-200"
+                                >
+                                    <Play size={16} fill="currentColor" />
+                                    {playlistsSpace.isFull ? 'Scanning Disabled (Capacity Reached)' : 'Scan & Analyze Games'}
                                 </button>
                             </div>
                         )}
 
-                        {/* Info Guide */}
+                        {/* Scanner guide */}
                         {!analyzing && !results && !ingestError && (
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mt-8">
-                                <h3 className="font-bold text-white mb-3">How Chess-OP scanning works</h3>
-                                <ul className="space-y-3 text-sm text-chess-text-secondary">
-                                    <li className="flex items-start gap-2.5">
-                                        <ArrowRight className="text-chess-accent mt-0.5 shrink-0" size={16} />
-                                        We fetch matches from Lichess matching your selected time control combinations and date windows.
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+                                <h3 className="font-bold text-white mb-2 text-sm flex items-center gap-2">
+                                    <Sparkles size={16} className="text-chess-accent" />
+                                    <span>How scanning works</span>
+                                </h3>
+                                <ul className="space-y-2.5 text-xs text-chess-text-secondary">
+                                    <li className="flex items-start gap-2">
+                                        <span className="text-chess-accent select-none mt-0.5">•</span>
+                                        We fetch matches matching your selections directly from Lichess's public API.
                                     </li>
-                                    <li className="flex items-start gap-2.5">
-                                        <ArrowRight className="text-chess-accent mt-0.5 shrink-0" size={16} />
-                                        The Stockfish engine evaluates every move to check for errors where evaluation dropped by ≥ 1.0 centipawn loss.
+                                    <li className="flex items-start gap-2">
+                                        <span className="text-chess-accent select-none mt-0.5">•</span>
+                                        Stockfish runs client-side to find positions where you made a mistake (≥ 1.0 ELO evaluation loss).
                                     </li>
-                                    <li className="flex items-start gap-2.5">
-                                        <ArrowRight className="text-chess-accent mt-0.5 shrink-0" size={16} />
-                                        Custom puzzles are constructed on the fly from positions where you blundered, allowing you to learn from your own mistakes.
-                                    </li>
-                                    <li className="flex items-start gap-2.5">
-                                        <ArrowRight className="text-chess-accent mt-0.5 shrink-0" size={16} />
-                                        Games already analysed are automatically indexed and skipped to ensure speedy and efficient scans.
+                                    <li className="flex items-start gap-2">
+                                        <span className="text-chess-accent select-none mt-0.5">•</span>
+                                        Custom chess cards are generated for each blunder, placing them directly into your training deck.
                                     </li>
                                 </ul>
                             </div>
                         )}
                     </div>
-                )}
+
+                    {/* RIGHT COLUMN: Manual Import (PGN / FEN) */}
+                    <div className="w-full lg:w-[400px] shrink-0">
+                        <div className="bg-chess-panel border border-white/5 rounded-3xl p-6 sm:p-7 shadow-xl flex flex-col relative">
+                            <div className="absolute top-0 right-0 w-48 h-48 bg-chess-accent/[0.02] rounded-full blur-2xl pointer-events-none" />
+
+                            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2.5">
+                                <Upload size={18} className="text-chess-accent" />
+                                <span>Manual Position Import</span>
+                            </h3>
+
+                            {/* FEN/PGN mini-tab switcher */}
+                            <div className="flex p-1 bg-black/25 border border-white/5 rounded-xl mb-5">
+                                <button
+                                    type="button"
+                                    onClick={() => { setImportTab('fen'); setSaveStatus({ type: '', text: '' }); }}
+                                    className={`flex-1 py-2 font-bold text-xs flex items-center justify-center gap-1.5 rounded-lg transition-all ${
+                                        importTab === 'fen' 
+                                            ? 'bg-chess-accent text-white shadow'
+                                            : 'text-chess-text-secondary hover:text-white'
+                                    }`}
+                                >
+                                    <Search size={14} /> FEN String
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { setImportTab('pgn'); setSaveStatus({ type: '', text: '' }); }}
+                                    className={`flex-1 py-2 font-bold text-xs flex items-center justify-center gap-1.5 rounded-lg transition-all ${
+                                        importTab === 'pgn' 
+                                            ? 'bg-chess-accent text-white shadow'
+                                            : 'text-chess-text-secondary hover:text-white'
+                                    }`}
+                                >
+                                    <FileText size={14} /> Full PGN
+                                </button>
+                            </div>
+
+                            {/* Status Notification */}
+                            {saveStatus.text && (
+                                <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 mb-4 animate-in ${
+                                    saveStatus.type === 'success'
+                                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-450'
+                                        : saveStatus.type === 'error'
+                                            ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                                            : 'bg-white/5 border-white/10 text-chess-text-secondary'
+                                }`}>
+                                    <span>{saveStatus.text}</span>
+                                </div>
+                            )}
+
+                            {/* Input Form Fields */}
+                            <div className="space-y-4">
+                                {importTab === 'fen' ? (
+                                    <div className="space-y-1.5">
+                                        <label htmlFor="fenInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">FEN String</label>
+                                        <input
+                                            id="fenInput"
+                                            type="text"
+                                            value={fenInput}
+                                            onChange={(e) => setFenInput(e.target.value)}
+                                            placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                                            className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-3 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-all font-mono"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="space-y-1.5">
+                                        <label htmlFor="pgnInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">PGN Text</label>
+                                        <textarea
+                                            id="pgnInput"
+                                            value={pgnInput}
+                                            onChange={(e) => setPgnInput(e.target.value)}
+                                            placeholder="1. e4 e5 2. Nf3 Nc6..."
+                                            className="w-full h-24 bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs p-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-all resize-none scrollbar-thin font-mono"
+                                        />
+                                    </div>
+                                )}
+
+                                <div className="space-y-1.5">
+                                    <label htmlFor="puzzleName" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Puzzle Title</label>
+                                    <input
+                                        id="puzzleName"
+                                        type="text"
+                                        value={savePuzzleName}
+                                        onChange={(e) => setSavePuzzleName(e.target.value)}
+                                        placeholder="e.g. Pin on the knight"
+                                        className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
+                                    />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                    <label htmlFor="puzzleOpening" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Opening Name / Tag</label>
+                                    <input
+                                        id="puzzleOpening"
+                                        type="text"
+                                        value={savePuzzleOpening}
+                                        onChange={(e) => setSavePuzzleOpening(e.target.value)}
+                                        placeholder="e.g. Caro-Kann Defense"
+                                        className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Side to Move</label>
+                                    <div className="grid grid-cols-2 gap-3 bg-black/20 p-1.5 rounded-xl border border-white/5">
+                                        <button
+                                            type="button"
+                                            onClick={() => setSavePuzzleColor('white')}
+                                            className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                                                savePuzzleColor === 'white'
+                                                    ? 'bg-chess-accent text-white shadow font-bold'
+                                                    : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
+                                            }`}
+                                        >
+                                            <img
+                                                src={getPieceImageUrl(pieceSet, 'w', 'k')}
+                                                alt="White King"
+                                                className="w-6 h-6 object-contain drop-shadow"
+                                            />
+                                            <span>White to Play</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSavePuzzleColor('black')}
+                                            className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                                                savePuzzleColor === 'black'
+                                                    ? 'bg-chess-accent text-white shadow font-bold'
+                                                    : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
+                                            }`}
+                                        >
+                                            <img
+                                                src={getPieceImageUrl(pieceSet, 'b', 'k')}
+                                                alt="Black King"
+                                                className="w-6 h-6 object-contain drop-shadow"
+                                            />
+                                            <span>Black to Play</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2 relative">
+                                    <label className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Add to Playlist</label>
+                                    
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsPlaylistDropdownOpen(!isPlaylistDropdownOpen)}
+                                        className="w-full bg-chess-bg border border-white/10 hover:border-chess-accent/30 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white flex justify-between items-center transition-all cursor-pointer"
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            {savePlaylistIdx === 'fav' ? (
+                                                <span className="text-yellow-400">⭐</span>
+                                            ) : (
+                                                <Folder size={14} className="text-chess-accent" />
+                                            )}
+                                            <span className="font-semibold text-chess-text-primary text-left">
+                                                {savePlaylistIdx === 'fav' ? 'Starred / Favorites' : (selectedPlaylist?.title || 'Select Playlist')}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            {savePlaylistIdx !== 'fav' && selectedPlaylist && (
+                                                <span className="text-[10px] text-chess-text-secondary">({selectedPlaylist.total}/20)</span>
+                                            )}
+                                            <ChevronDown size={14} className={`text-chess-text-secondary transition-transform duration-200 ${isPlaylistDropdownOpen ? 'rotate-180' : ''}`} />
+                                        </div>
+                                    </button>
+
+                                    {isPlaylistDropdownOpen && (
+                                        <>
+                                            <div className="fixed inset-0 z-10" onClick={() => setIsPlaylistDropdownOpen(false)} />
+                                            <div className="absolute z-20 mt-1 w-full bg-chess-panel border border-white/10 rounded-xl shadow-2xl p-1.5 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                                                {availablePlaylists.map(pl => (
+                                                    <button
+                                                        key={pl.index}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSavePlaylistIdx(pl.index.toString());
+                                                            setIsPlaylistDropdownOpen(false);
+                                                        }}
+                                                        className={`w-full py-2 px-2.5 text-left text-xs font-semibold rounded-lg transition-all flex justify-between items-center cursor-pointer ${
+                                                            savePlaylistIdx === pl.index.toString()
+                                                                ? 'bg-chess-accent/15 text-white'
+                                                                : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <Folder size={14} className="opacity-70 text-chess-accent" />
+                                                            <span>{pl.title}</span>
+                                                        </div>
+                                                        <span className="text-[10px] opacity-65">({pl.total}/20)</span>
+                                                    </button>
+                                                ))}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSavePlaylistIdx('fav');
+                                                        setIsPlaylistDropdownOpen(false);
+                                                    }}
+                                                    className={`w-full py-2 px-2.5 text-left text-xs font-semibold rounded-lg transition-all flex justify-between items-center cursor-pointer ${
+                                                        savePlaylistIdx === 'fav'
+                                                            ? 'bg-yellow-500/10 text-yellow-400 font-bold'
+                                                            : 'text-chess-text-secondary hover:text-yellow-400 hover:bg-yellow-500/5'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <span>⭐</span>
+                                                        <span>Starred / Favorites</span>
+                                                    </div>
+                                                    <span className="text-[10px] opacity-65">(Max 10)</span>
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+
+
+                            </div>
+
+                            <button
+                                onClick={handleSavePuzzle}
+                                disabled={saveStatus.type === 'loading'}
+                                className="mt-6 w-full py-3.5 bg-chess-accent hover:bg-chess-accent-hover text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 transition-all hover:-translate-y-0.5 disabled:opacity-50"
+                            >
+                                <Save size={16} /> Save to Playlist
+                            </button>
+                        </div>
+                    </div>
+
+                </div>
+
             </div>
         </DashboardLayout>
     );
