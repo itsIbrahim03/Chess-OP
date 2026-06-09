@@ -18,11 +18,11 @@ body {
 
 /* Chessground Theme - Lichess Brown Style (High Contrast) */
 cg-board {
-  background-color: #f0d9b5 !important;
+  background-color: #f0d9b5;
   /* Light squares */
   background-image: repeating-conic-gradient(#b58863 0% 25%,
-      #f0d9b5 25% 50%) !important;
-  background-size: 25% 25% !important;
+      #f0d9b5 25% 50%);
+  background-size: 25% 25%;
 }
 
 /* Remove library SVG overlay */
@@ -39,4 +39,20 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 input[type="number"] {
   -moz-appearance: textfield;
+}
+
+/* Toast Animations */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }

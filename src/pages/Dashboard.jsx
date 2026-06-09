@@ -89,7 +89,7 @@ export default function Dashboard() {
       setPlaylists(groups.value);
     }
     if (logs.status === 'fulfilled') setHistory(logs.value);
-    if (favs.status === 'fulfilled') setFavorites(favs.value.slice(0, 3));
+    if (favs.status === 'fulfilled') setFavorites(favs.value.slice(0, 5));
     if (count.status === 'fulfilled') setNewCount(count.value);
 
     setLoading(false);
@@ -117,7 +117,7 @@ export default function Dashboard() {
       )}
 
       {/* Welcome */}
-      <div className="mb-10">
+      <div className="mb-4">
         <h1 className="text-3xl font-serif font-bold text-white mb-2">
           {greeting()}, {firstName}
         </h1>
@@ -134,6 +134,29 @@ export default function Dashboard() {
           </p>
         )}
       </div>
+
+      {/* Pending Scan Review Alert Card */}
+      {!loading && userProfile?.pendingScan?.status === 'completed' && userProfile.pendingScan.count > 0 && (
+        <div className="mb-8 bg-gradient-to-r from-chess-accent/15 via-chess-accent/5 to-transparent border border-chess-accent/30 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-chess-accent/5">
+          <div className="flex items-start gap-4">
+            <div className="w-12 h-12 bg-chess-accent/15 border border-chess-accent/30 rounded-xl flex items-center justify-center shrink-0 text-chess-accent">
+              <BookOpen size={24} />
+            </div>
+            <div>
+              <h4 className="font-bold text-white mb-0.5">Review Pending Puzzles</h4>
+              <p className="text-sm text-chess-text-secondary">
+                You have {userProfile.pendingScan.count} new blunder puzzles from your recent game scan waiting to be named and saved to your playlists.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/dashboard/analysis-board?review=true')}
+            className="px-6 py-3 bg-chess-accent hover:bg-chess-accent-hover text-white font-bold rounded-xl text-sm transition-all shadow-md shadow-chess-accent/15 hover:-translate-y-0.5 whitespace-nowrap cursor-pointer"
+          >
+            Review & Ingest Puzzles
+          </button>
+        </div>
+      )}
 
       {/* Lichess Connection Alert Banner */}
       {!loading && !userProfile?.lichessUsername && (
@@ -159,15 +182,15 @@ export default function Dashboard() {
       )}
 
       {/* ── Stats Row ────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
 
         {/* Total Solved */}
-        <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl relative overflow-hidden group">
+        <div className="bg-chess-panel border border-white/5 p-5 rounded-2xl relative overflow-hidden group">
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Trophy size={64} />
           </div>
           <h3 className="text-chess-text-secondary text-sm font-medium mb-1">Total Puzzles Solved</h3>
-          <div className="text-4xl font-bold text-white mb-2">
+          <div className="text-3xl font-bold text-white mb-2">
             {loading ? <Loader2 size={28} className="animate-spin text-chess-accent" /> : (userProfile?.stats?.totalSolved ?? 0).toLocaleString()}
           </div>
           <div className="text-chess-text-secondary text-sm">
@@ -176,12 +199,12 @@ export default function Dashboard() {
         </div>
 
         {/* Current Streak */}
-        <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl relative overflow-hidden group">
+        <div className="bg-chess-panel border border-white/5 p-5 rounded-2xl relative overflow-hidden group">
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Flame size={64} />
           </div>
           <h3 className="text-chess-text-secondary text-sm font-medium mb-1">Current Streak</h3>
-          <div className="text-4xl font-bold text-white mb-2">
+          <div className="text-3xl font-bold text-white mb-2">
             {loading ? <Loader2 size={28} className="animate-spin text-chess-accent" /> : `${userProfile?.stats?.streak ?? 0} Days`}
           </div>
           <div className="text-sm text-chess-text-secondary">
@@ -191,7 +214,7 @@ export default function Dashboard() {
 
         {/* Resume Training CTA */}
         <div
-          className="bg-gradient-to-br from-chess-accent to-chess-accent/80 p-6 rounded-2xl relative overflow-hidden text-white shadow-lg shadow-chess-accent/20"
+          className="bg-gradient-to-br from-chess-accent to-chess-accent/80 p-5 rounded-2xl relative overflow-hidden text-white shadow-lg shadow-chess-accent/20"
         >
           <h3 className="text-white/90 text-sm font-medium mb-1">Quick Start</h3>
           <div className="text-2xl font-bold mb-4">Resume Training</div>
@@ -213,14 +236,14 @@ export default function Dashboard() {
       </div>
 
       {/* ── Main Grid ────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
         {/* LEFT: Playlists + History */}
-        <div className="lg:col-span-2 space-y-8">
+        <div className="lg:col-span-2 space-y-5">
 
           {/* Active Playlists */}
           <section>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <BookOpen size={20} className="text-chess-accent" /> Active Playlists
               </h2>
@@ -265,36 +288,36 @@ export default function Dashboard() {
 
               // SVG Circular Gauge Helper
               const CircularGauge = ({ percentage, color = 'stroke-chess-accent', title, subtitle }) => {
-                const radius = 38;
+                const radius = 30;
                 const circumference = 2 * Math.PI * radius;
                 const strokeDashoffset = circumference - (percentage / 100) * circumference;
 
                 return (
-                  <div className="flex flex-col items-center gap-1 shrink-0" title={title}>
-                    <div className="relative w-24 h-24 flex items-center justify-center">
-                      <svg className="w-full h-full transform -rotate-90">
+                  <div className="flex flex-col items-center shrink-0" title={title}>
+                    <div className="relative w-[72px] h-[72px] flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90" viewBox="0 0 72 72">
                         <circle
-                          cx="48"
-                          cy="48"
+                          cx="36"
+                          cy="36"
                           r={radius}
                           className="stroke-white/5 fill-transparent"
-                          strokeWidth="5"
+                          strokeWidth="4"
                         />
                         <circle
-                          cx="48"
-                          cy="48"
+                          cx="36"
+                          cy="36"
                           r={radius}
                           className={`fill-transparent transition-all duration-1000 ${color}`}
-                          strokeWidth="5"
+                          strokeWidth="4"
                           strokeDasharray={circumference}
                           strokeDashoffset={strokeDashoffset}
                           strokeLinecap="round"
                         />
                       </svg>
-                      <span className="absolute text-lg font-bold text-white">{percentage}%</span>
+                      <span className="absolute text-sm font-bold text-white">{percentage}%</span>
                     </div>
                     <span className="text-[10px] uppercase font-bold text-chess-text-secondary tracking-wider mt-1.5">{title}</span>
-                    {subtitle && <span className="text-[9px] text-chess-text-secondary opacity-70 font-semibold">{subtitle}</span>}
+                    {subtitle && <span className="text-[9px] text-chess-text-secondary opacity-70 font-semibold mt-0.5">{subtitle}</span>}
                   </div>
                 );
               };
@@ -305,15 +328,15 @@ export default function Dashboard() {
                     return (
                       <div
                         key={i}
-                        className="bg-chess-panel border border-white/5 p-6 rounded-2xl transition-all duration-500 ease-out transform hover:-translate-y-1 hover:border-chess-accent/40 hover:shadow-[0_10px_25px_-5px_rgba(235,94,85,0.15)] flex items-center justify-between h-[160px] relative overflow-hidden group select-none"
+                        className="bg-chess-panel border border-white/5 p-5 sm:p-6 rounded-2xl transition-all duration-500 ease-out transform hover:-translate-y-1 hover:border-chess-accent/40 hover:shadow-[0_10px_25px_-5px_rgba(235,94,85,0.15)] flex items-center justify-between h-[150px] relative overflow-hidden group select-none"
                       >
                         {/* Background subtle glowing circle on hover */}
                         <div className="absolute -right-8 -bottom-8 w-24 h-24 rounded-full bg-chess-accent/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
                         {/* Left side: Metadata and Manage action button */}
-                        <div className="flex flex-col justify-between h-full py-1 min-w-0 flex-1 mr-4">
+                        <div className="flex flex-col justify-between h-full py-0.5 min-w-0 flex-1 mr-4">
                           <div>
-                            <h3 className="text-white font-bold text-lg mb-1 truncate" title={pl.title}>
+                            <h3 className="text-white font-bold text-lg mb-0.5 truncate" title={pl.title}>
                               {pl.title}
                             </h3>
                             <p className="text-xs text-chess-text-secondary">
@@ -323,7 +346,7 @@ export default function Dashboard() {
 
                           <button
                             onClick={() => navigate('/dashboard/repertoire')}
-                            className="bg-white/5 hover:bg-chess-accent hover:text-white text-chess-text-secondary hover:shadow-inner text-xs px-3.5 py-2 rounded-xl transition-all duration-300 font-semibold flex items-center gap-1 w-fit"
+                            className="bg-white/5 hover:bg-chess-accent hover:text-white text-chess-text-secondary hover:shadow-inner text-xs px-3.5 py-2 rounded-xl transition-all duration-300 font-semibold flex items-center gap-1 w-fit cursor-pointer"
                           >
                             Manage <ArrowRight size={12} />
                           </button>
@@ -348,7 +371,7 @@ export default function Dashboard() {
 
           {/* Recent History */}
           <section>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <History size={20} className="text-chess-text-secondary" /> Recent History
               </h2>
@@ -405,11 +428,15 @@ export default function Dashboard() {
         </div>
 
         {/* RIGHT: Favorites */}
-        <div className="space-y-8">
+        <div className="space-y-5">
           <section>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <div className="flex items-center justify-between mb-3">
+              <h2
+                onClick={() => navigate('/dashboard/repertoire?filter=favorites')}
+                className="text-xl font-bold text-white flex items-center gap-2 cursor-pointer hover:text-yellow-400 transition-colors group"
+              >
                 <Star size={20} className="text-yellow-400" /> Favorites
+                <ChevronRight size={16} className="text-chess-text-secondary group-hover:text-yellow-400 transition-colors" />
               </h2>
             </div>
 
@@ -452,7 +479,7 @@ export default function Dashboard() {
 
                 {favorites.length >= 3 && (
                   <button
-                    onClick={() => navigate('/dashboard/repertoire')}
+                    onClick={() => navigate('/dashboard/repertoire?filter=favorites')}
                     className="w-full text-center text-sm text-chess-accent hover:text-white py-2 transition-colors"
                   >
                     View all favorites →

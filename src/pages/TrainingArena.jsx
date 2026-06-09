@@ -43,7 +43,6 @@ export default function TrainingArena() {
     const [boardTheme, setBoardTheme] = useState(getBoardTheme('classic'));
     const [pieceSet, setPieceSet] = useState(getPieceSet('cburnett'));
     const [autoNext, setAutoNext] = useState(false);
-    const [soundEnabled, setSoundEnabled] = useState(true);
     const [showCoordinates, setShowCoordinates] = useState(true);
 
     // One-Time session state variables
@@ -66,7 +65,6 @@ export default function TrainingArena() {
             if (profile?.settings?.boardTheme) setBoardTheme(getBoardTheme(profile.settings.boardTheme));
             if (profile?.settings?.pieceSet) setPieceSet(getPieceSet(profile.settings.pieceSet));
             if (profile?.settings?.autoNext !== undefined) setAutoNext(profile.settings.autoNext);
-            if (profile?.settings?.soundEnabled !== undefined) setSoundEnabled(profile.settings.soundEnabled);
             if (profile?.settings?.showCoordinates !== undefined) setShowCoordinates(profile.settings.showCoordinates);
         }).catch(() => {});
     }, [user]);
@@ -183,24 +181,10 @@ export default function TrainingArena() {
         return true;
     }
 
-    const playSound = (type) => {
-        if (!soundEnabled) return;
-        const urls = {
-            move: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/move-self.mp3',
-            capture: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/capture.mp3',
-            check: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/check.mp3',
-            success: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/game-end.mp3',
-            failure: 'https://images.chesscomfiles.com/chess-themes/sounds/chessKits/default/low-time.mp3'
-        };
-        const audio = new Audio(urls[type]);
-        audio.play().catch(e => console.warn('Audio play failed:', e));
-    };
-
     const handleHint = () => {
         if (!currentPuzzle || !cgRef.current) return;
         const bestMoveFrom = currentPuzzle.correctMove.substring(0, 2);
         cgRef.current.setShapes([{ orig: bestMoveFrom, brush: 'yellow' }]);
-        playSound('move');
     };
 
     const handleShowSolution = () => {
@@ -211,7 +195,6 @@ export default function TrainingArena() {
             { orig: bestMoveFrom, dest: bestMoveTo, brush: 'green' }
         ]);
         setStatus('solution_revealed');
-        playSound('failure');
     };
 
     const handleDoAgain = () => {
@@ -224,7 +207,6 @@ export default function TrainingArena() {
             drawable: { shapes: [] }
         });
         setStatus('active');
-        playSound('move');
     };
 
 
@@ -238,6 +220,7 @@ export default function TrainingArena() {
                 orientation: orientation,
                 turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
                 animation: { enabled: true, duration: 200 },
+                coordinates: showCoordinates,
                 movable: {
                     free: false,
                     color: currentPuzzle.color,
@@ -249,7 +232,7 @@ export default function TrainingArena() {
         } else {
             configureBoard(currentPuzzle);
         }
-    }, [currentPuzzle?.id, orientation]); // Only reconfigure on new puzzle, not on metadata changes like isFavorite
+    }, [currentPuzzle?.id, orientation, showCoordinates]); // Reconfigure on puzzle, orientation, or coordinates change
 
     function configureBoard(puzzle) {
         cgRef.current.set({
@@ -257,6 +240,7 @@ export default function TrainingArena() {
             orientation: puzzle.color,
             turnColor: chessRef.current.turn() === 'w' ? 'white' : 'black',
             lastMove: null,
+            coordinates: showCoordinates,
             movable: {
                 color: puzzle.color,
                 dests: getLegalMoves()
@@ -279,7 +263,6 @@ export default function TrainingArena() {
         if (!puzzle) return;
 
         const moves = chessRef.current.moves({ verbose: true });
-        const moveDetails = moves.find(m => m.from === from && m.to === to);
         const isPromotion = moves.some(m => m.from === from && m.to === to && m.promotion);
         const uciMove = from + to + (isPromotion ? 'q' : '');
         const isCorrect = uciMove === puzzle.correctMove;
@@ -287,15 +270,6 @@ export default function TrainingArena() {
         if (isCorrect) {
             setStatus('success');
             chessRef.current.move({ from, to, promotion: 'q' });
-            
-            // Play success/capture/check sound
-            if (moveDetails?.captured) {
-                playSound('capture');
-            } else if (chessRef.current.inCheck()) {
-                playSound('check');
-            } else {
-                playSound('success');
-            }
 
             cgRef.current.set({
                 fen: chessRef.current.fen(),
@@ -316,18 +290,15 @@ export default function TrainingArena() {
             // Handle auto-next puzzle progression
             if (autoNext) {
                 const isLastInSession = isOneTime && (currentSessionIndex + 1 === sessionQueue.length);
-                setTimeout(() => {
-                    if (isLastInSession) {
-                        setSessionFinished(true);
-                    } else {
-                        loadNextPuzzle(false);
-                    }
-                }, 1500);
+                if (isLastInSession) {
+                    setSessionFinished(true);
+                } else {
+                    loadNextPuzzle(false);
+                }
             }
 
         } else {
             setStatus('failure');
-            playSound('failure');
             setStats(prev => ({ ...prev, streak: 0 }));
 
             const bestMoveFrom = puzzle.correctMove.substring(0, 2);
@@ -559,9 +530,11 @@ export default function TrainingArena() {
                             .cg-wrap piece.black.rook { background-image: url('${pieceSet.pieces.b.r}') !important; }
                             .cg-wrap piece.black.queen { background-image: url('${pieceSet.pieces.b.q}') !important; }
                             .cg-wrap piece.black.king { background-image: url('${pieceSet.pieces.b.k}') !important; }
-                            .cg-wrap square.white { background-color: ${boardTheme.lightSquare} !important; }
-                            .cg-wrap square.black { background-color: ${boardTheme.darkSquare} !important; }
-                            .cg-wrap coords { display: ${showCoordinates === false ? 'none' : 'block'} !important; }
+                            cg-board {
+                                background-image: repeating-conic-gradient(${boardTheme.darkSquare} 0% 25%, ${boardTheme.lightSquare} 25% 50%) !important;
+                                background-size: 25% 25% !important;
+                            }
+                            ${showCoordinates === false ? '.cg-wrap coords { display: none !important; }' : ''}
                         `}</style>
                         <div
                             ref={boardRef}

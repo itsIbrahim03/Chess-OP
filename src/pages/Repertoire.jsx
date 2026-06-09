@@ -137,6 +137,15 @@ export default function Repertoire() {
         return () => clearTimeout(timer);
     }, [user?.uid, viewMode, loadRepertoire]);
 
+    // Pick up ?filter= query parameter from URL to auto-apply status filter
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const filterParam = params.get('filter');
+        if (filterParam && ['all', 'favorites', 'new', 'active', 'white', 'black'].includes(filterParam)) {
+            setStatusFilter(filterParam);
+        }
+    }, []);
+
     const toggleGroup = (playlistIdx) => {
         setExpandedGroups(prev => ({
             ...prev,
@@ -155,26 +164,23 @@ export default function Repertoire() {
         setRenameValue('');
     };
 
-    const handleSaveRename = async (puzzleId, playlistIdx) => {
+    const handleSaveRename = async (puzzleId) => {
         if (!renameValue.trim()) return;
         setRenaming(true);
         try {
             await renamePuzzle(user.uid, puzzleId, renameValue);
 
-            // Update local state optimistically
+            // Update local state optimistically - update puzzle in whatever group it resides
             setGroups(prev => prev.map(group => {
-                if (group.playlistIndex === playlistIdx) {
-                    return {
-                        ...group,
-                        puzzles: group.puzzles.map(p => {
-                            if (p.id === puzzleId) {
-                                return { ...p, customName: renameValue.trim() };
-                            }
-                            return p;
-                        })
-                    };
-                }
-                return group;
+                return {
+                    ...group,
+                    puzzles: group.puzzles.map(p => {
+                        if (p.id === puzzleId) {
+                            return { ...p, customName: renameValue.trim() };
+                        }
+                        return p;
+                    })
+                };
             }));
 
             setEditingPuzzleId(null);
@@ -207,9 +213,9 @@ export default function Repertoire() {
         try {
             await renamePlaylist(user.uid, playlistIdx, playlistRenameValue);
 
-            // Update local state
+            // Update local state - use string matching to avoid number/string mismatch
             setGroups(prev => prev.map(g => {
-                if (g.playlistIndex === playlistIdx) {
+                if (g.playlistIndex !== undefined && g.playlistIndex.toString() === playlistIdx.toString()) {
                     return { ...g, title: playlistRenameValue.trim() };
                 }
                 return g;
@@ -251,20 +257,17 @@ export default function Repertoire() {
     const handleToggleFavorite = async (puzzle, playlistIdx) => {
         const newFavState = !puzzle.isFavorite;
 
-        // Optimistic local state update
+        // Optimistic local state update - update puzzle in whatever group it resides
         setGroups(prev => prev.map(group => {
-            if (group.playlistIndex === playlistIdx) {
-                return {
-                    ...group,
-                    puzzles: group.puzzles.map(p => {
-                        if (p.id === puzzle.id) {
-                            return { ...p, isFavorite: newFavState };
-                        }
-                        return p;
-                    })
-                };
-            }
-            return group;
+            return {
+                ...group,
+                puzzles: group.puzzles.map(p => {
+                    if (p.id === puzzle.id) {
+                        return { ...p, isFavorite: newFavState };
+                    }
+                    return p;
+                })
+            };
         }));
 
         try {
@@ -344,23 +347,40 @@ export default function Repertoire() {
         }
     };
 
-    // Playlist creation handler
-    const handleCreatePlaylist = async () => {
-        const name = window.prompt("Enter a name for your new training playlist:");
-        if (!name || !name.trim()) return;
+    // Create playlist modal states
+    const [showCreateModal, setShowCreateModal] = useState(false);
+    const [newPlaylistName, setNewPlaylistName] = useState('');
+    const [creatingPlaylist, setCreatingPlaylist] = useState(false);
 
-        setLoading(true);
+    // Playlist creation handler
+    const handleCreatePlaylist = () => {
+        // Block creating a 4th playlist (indices 0, 1, 2 = 3 playlists max)
+        const existingCount = groups.filter(g => typeof g.playlistIndex === 'number').length;
+        if (existingCount >= 3) {
+            setToast({ message: 'Maximum 3 playlists allowed. Delete an existing playlist first.', type: 'error' });
+            setTimeout(() => setToast(null), 4000);
+            return;
+        }
+        setNewPlaylistName('');
+        setShowCreateModal(true);
+    };
+
+    const handleConfirmCreatePlaylist = async () => {
+        if (!newPlaylistName.trim()) return;
+        setCreatingPlaylist(true);
         try {
-            await createPlaylist(user.uid, name);
+            await createPlaylist(user.uid, newPlaylistName);
             await loadRepertoire();
-            setToast({ message: `Playlist "${name.trim()}" created successfully!`, type: 'success' });
+            setShowCreateModal(false);
+            setNewPlaylistName('');
+            setToast({ message: `Playlist "${newPlaylistName.trim()}" created successfully!`, type: 'success' });
             setTimeout(() => setToast(null), 3500);
         } catch (e) {
             console.error('Failed to create playlist:', e);
             setToast({ message: 'Failed to create playlist.', type: 'error' });
             setTimeout(() => setToast(null), 3000);
         } finally {
-            setLoading(false);
+            setCreatingPlaylist(false);
         }
     };
 
@@ -416,29 +436,50 @@ export default function Repertoire() {
     };
 
     // Filters and search logic (Only by puzzle name)
-    const filteredGroups = groups.map(group => {
-        const filteredPuzzles = group.puzzles.filter(puzzle => {
-            const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
-            const matchesSearch =
-                !searchQuery.trim() ||
-                nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
+    const filteredGroups = (() => {
+        if (statusFilter === 'favorites') {
+            // Collect ALL favorites across all playlists into one virtual group
+            const allFavPuzzles = groups.flatMap(group =>
+                group.puzzles.filter(puzzle => {
+                    if (!puzzle.isFavorite) return false;
+                    const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
+                    return !searchQuery.trim() || nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
+                })
+            );
+            return [{
+                playlistIndex: 'fav-virtual',
+                title: '⭐ Favorites',
+                puzzles: allFavPuzzles,
+                filteredPuzzles: allFavPuzzles,
+                total: allFavPuzzles.length,
+                solved: allFavPuzzles.filter(p => p.status === 'solved' || p.status === 'mastered').length,
+                progress: allFavPuzzles.length > 0 ? Math.round((allFavPuzzles.filter(p => p.status === 'solved' || p.status === 'mastered').length / allFavPuzzles.length) * 100) : 0
+            }];
+        }
 
-            const matchesStatus =
-                statusFilter === 'all' ||
-                (statusFilter === 'favorites' && puzzle.isFavorite === true) ||
-                (statusFilter === 'new' && puzzle.status === 'new') ||
-                (statusFilter === 'active' && (puzzle.status === 'active' || puzzle.lastResult === 'fail')) ||
-                (statusFilter === 'white' && puzzle.userColor === 'white') ||
-                (statusFilter === 'black' && puzzle.userColor === 'black');
+        return groups.map(group => {
+            const filteredPuzzles = group.puzzles.filter(puzzle => {
+                const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
+                const matchesSearch =
+                    !searchQuery.trim() ||
+                    nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
 
-            return matchesSearch && matchesStatus;
+                const matchesStatus =
+                    statusFilter === 'all' ||
+                    (statusFilter === 'new' && puzzle.status === 'new') ||
+                    (statusFilter === 'active' && (puzzle.status === 'active' || puzzle.lastResult === 'fail')) ||
+                    (statusFilter === 'white' && puzzle.userColor === 'white') ||
+                    (statusFilter === 'black' && puzzle.userColor === 'black');
+
+                return matchesSearch && matchesStatus;
+            });
+
+            return {
+                ...group,
+                filteredPuzzles
+            };
         });
-
-        return {
-            ...group,
-            filteredPuzzles
-        };
-    });
+    })();
 
     const hasAnyPuzzles = groups.some(g => g.total > 0 || g.puzzles.length > 0);
 
@@ -738,14 +779,14 @@ export default function Repertoire() {
                                                                             type="text"
                                                                             value={renameValue}
                                                                             onChange={(e) => setRenameValue(e.target.value)}
-                                                                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(puzzle.id, playlist.playlistIndex); }}
+                                                                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(puzzle.id); }}
                                                                             className="flex-1 bg-chess-bg border border-chess-accent focus:ring-0 text-white px-3 py-1 rounded text-sm placeholder:text-chess-text-secondary focus:outline-none"
                                                                             placeholder="Custom puzzle name"
                                                                             disabled={renaming}
                                                                             autoFocus
                                                                         />
                                                                         <button
-                                                                            onClick={() => handleSaveRename(puzzle.id, playlist.playlistIndex)}
+                                                                            onClick={() => handleSaveRename(puzzle.id)}
                                                                             disabled={renaming}
                                                                             className="p-1 text-green-400 hover:text-green-300 disabled:opacity-50"
                                                                             title="Save Name"
@@ -807,20 +848,22 @@ export default function Repertoire() {
                                                                 {/* Moving panel (Only in Playlist viewMode) */}
                                                                 {viewMode === 'playlists' && (
                                                                     movingPuzzleId === puzzle.id ? (
-                                                                        <div className="flex items-center gap-1 bg-chess-bg/85 border border-white/10 rounded px-2.5 py-1 shrink-0 backdrop-blur-md">
+                                                                        <div className="flex items-center gap-1.5 bg-chess-bg/90 border border-white/10 rounded-lg px-3 py-1.5 shrink-0 backdrop-blur-md">
                                                                             <span className="text-[10px] uppercase font-bold text-chess-text-secondary mr-1">Move to:</span>
-                                                                            {groups.map(g => (
-                                                                                g.playlistIndex !== playlist.playlistIndex && (
-                                                                                    <button
-                                                                                        key={g.playlistIndex}
-                                                                                        onClick={() => handleMovePuzzle(puzzle.id, g.playlistIndex)}
-                                                                                        disabled={movingState}
-                                                                                        className="text-xs bg-white/5 hover:bg-chess-accent hover:text-white px-2 py-0.5 rounded transition-all text-white font-medium disabled:opacity-50"
-                                                                                    >
-                                                                                        {g.title.split(' ')[0]}
-                                                                                    </button>
-                                                                                )
+                                                                            {groups.filter(g => g.playlistIndex !== puzzle.playlistIndex && g.puzzles.length < 20).map(g => (
+                                                                                <button
+                                                                                    key={g.playlistIndex}
+                                                                                    onClick={() => handleMovePuzzle(puzzle.id, g.playlistIndex)}
+                                                                                    disabled={movingState}
+                                                                                    className="text-xs bg-white/5 hover:bg-chess-accent hover:text-white px-2.5 py-1 rounded-md transition-all text-white font-medium disabled:opacity-50 whitespace-nowrap"
+                                                                                    title={`${g.title} (${g.puzzles.length}/20)`}
+                                                                                >
+                                                                                    {g.title}
+                                                                                </button>
                                                                             ))}
+                                                                            {groups.filter(g => g.playlistIndex !== puzzle.playlistIndex && g.puzzles.length < 20).length === 0 && (
+                                                                                <span className="text-[10px] text-red-400 italic">No playlists with space</span>
+                                                                            )}
                                                                             <button
                                                                                 onClick={() => setMovingPuzzleId(null)}
                                                                                 disabled={movingState}
@@ -902,6 +945,61 @@ export default function Repertoire() {
                         </svg>
                     </button>
                 </div>
+
+                {/* Create Playlist Modal */}
+                {showCreateModal && (
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-chess-panel border border-chess-accent/30 max-w-md w-full rounded-2xl shadow-2xl p-8 relative overflow-hidden">
+                            <div className="absolute inset-0 bg-gradient-to-br from-chess-accent/5 to-transparent pointer-events-none" />
+
+                            <div className="flex items-center gap-3 text-chess-accent mb-6">
+                                <div className="w-12 h-12 bg-chess-accent/15 border border-chess-accent/25 rounded-xl flex items-center justify-center">
+                                    <Plus size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-bold font-serif text-white">Create New Playlist</h3>
+                                    <p className="text-xs text-chess-text-secondary">Name your training deck (max 3 playlists)</p>
+                                </div>
+                            </div>
+
+                            <div className="mb-6">
+                                <label className="text-xs font-bold text-chess-text-secondary uppercase tracking-wider block mb-2">Playlist Name</label>
+                                <input
+                                    type="text"
+                                    value={newPlaylistName}
+                                    onChange={(e) => setNewPlaylistName(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') handleConfirmCreatePlaylist(); }}
+                                    placeholder="e.g. Sicilian Blunders"
+                                    className="w-full px-4 py-3 bg-chess-bg border border-white/10 rounded-xl text-white placeholder:text-chess-text-secondary focus:outline-none focus:border-chess-accent transition-colors text-sm"
+                                    autoFocus
+                                    maxLength={40}
+                                />
+                                <p className="text-[10px] text-chess-text-secondary mt-2">Choose a descriptive name for your new training playlist.</p>
+                            </div>
+
+                            <div className="flex items-center justify-end gap-3">
+                                <button
+                                    onClick={() => setShowCreateModal(false)}
+                                    disabled={creatingPlaylist}
+                                    className="px-4 py-2.5 text-sm text-chess-text-secondary hover:text-white rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleConfirmCreatePlaylist}
+                                    disabled={creatingPlaylist || !newPlaylistName.trim()}
+                                    className="px-6 py-2.5 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold text-sm transition-all shadow-lg shadow-chess-accent/15 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {creatingPlaylist ? (
+                                        <><Loader2 className="animate-spin" size={14} /> Creating...</>
+                                    ) : (
+                                        <><Plus size={14} /> Create Playlist</>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Playlist Deletion Overlay Warning Modal */}
                 {playlistToDelete && (

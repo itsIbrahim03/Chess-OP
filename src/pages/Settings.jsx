@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import DashboardLayout from '../components/DashboardLayout';
 import {
-    User, Link2, Palette, Save, Trash2, AlertTriangle, CheckCircle2,
+    User, UserPlus, UserMinus, Palette, Save, Trash2, AlertTriangle, CheckCircle2,
     XCircle, Loader2, Globe, Sparkles, Crown, Shield, Flag, Upload
 } from 'lucide-react';
+import Toast from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 import {
     getUserProfile, linkLichessAccount, updateUserSettings,
@@ -82,13 +83,13 @@ function MiniBoardPreview({ theme, selected, onClick }) {
     return (
         <button
             onClick={onClick}
-            className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all hover:scale-105 ${
+            className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all hover:scale-105 ${
                 selected
                     ? 'border-chess-accent bg-chess-accent/10 shadow-lg shadow-chess-accent/20'
                     : 'border-white/10 bg-white/5 hover:border-white/20'
             }`}
         >
-            <div className="grid grid-cols-4 grid-rows-4 w-16 h-16 rounded-md overflow-hidden shadow-inner">
+            <div className="grid grid-cols-4 grid-rows-4 w-20 h-20 rounded-md overflow-hidden shadow-inner">
                 {Array.from({ length: 16 }).map((_, i) => {
                     const row = Math.floor(i / 4);
                     const col = i % 4;
@@ -113,23 +114,23 @@ function PieceSetPreview({ pieceSet, selected, onClick }) {
     return (
         <button
             onClick={onClick}
-            className={`flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all hover:scale-105 w-full ${
+            className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all hover:scale-105 w-full ${
                 selected
                     ? 'border-chess-accent bg-chess-accent/10 shadow-lg shadow-chess-accent/25'
                     : 'border-white/5 bg-white/[0.02] hover:border-white/15 hover:bg-white/5'
             }`}
         >
-            <div className="flex gap-3 justify-center items-center py-2 h-12">
+            <div className="flex gap-3 justify-center items-center py-2 h-14">
                 <img
                     src={pieceSet.pieces.w.k}
                     alt="White King"
-                    className="w-10 h-10 object-contain drop-shadow"
+                    className="w-12 h-12 object-contain drop-shadow"
                     loading="lazy"
                 />
                 <img
                     src={pieceSet.pieces.b.k}
                     alt="Black King"
-                    className="w-10 h-10 object-contain drop-shadow"
+                    className="w-12 h-12 object-contain drop-shadow"
                     loading="lazy"
                 />
             </div>
@@ -261,14 +262,16 @@ export default function Settings() {
         boardTheme: 'classic',
         pieceSet: 'cburnett',
         showCoordinates: true,
-        soundEnabled: true,
         autoNext: false,
         accentColor: 'blue',
         engineDepth: 14
     });
 
-    // Messages
-    const [message, setMessage] = useState({ type: '', text: '' });
+    // Messages (wired to modern Toast)
+    const [toast, setToast] = useState({ message: '', type: 'success' });
+    const setMessage = useCallback(({ type, text }) => {
+        setToast({ message: text, type });
+    }, []);
 
     // Account clear modal
     const [clearModalOpen, setClearModalOpen] = useState(false);
@@ -293,7 +296,6 @@ export default function Settings() {
                 boardTheme: profile.settings?.boardTheme || 'classic',
                 pieceSet: profile.settings?.pieceSet || 'cburnett',
                 showCoordinates: profile.settings?.showCoordinates ?? true,
-                soundEnabled: profile.settings?.soundEnabled ?? true,
                 autoNext: profile.settings?.autoNext ?? false,
                 accentColor: profile.settings?.accentColor || 'blue',
                 engineDepth: profile.settings?.engineDepth || 14
@@ -375,16 +377,13 @@ export default function Settings() {
         }
     };
 
-    const handleSaveSettings = async () => {
-        setSaving(true);
+    const handleAutoSaveSettings = async (updatedSettings) => {
         try {
-            await updateUserSettings(user.uid, settings);
-            setMessage({ type: 'success', text: 'Settings saved successfully!' });
+            await updateUserSettings(user.uid, updatedSettings);
+            setMessage({ type: 'success', text: 'Preferences saved' });
         } catch (error) {
             console.error('Failed to save settings:', error);
-            setMessage({ type: 'error', text: 'Failed to save settings' });
-        } finally {
-            setSaving(false);
+            setMessage({ type: 'error', text: 'Failed to save preferences' });
         }
     };
 
@@ -407,12 +406,7 @@ export default function Settings() {
     };
 
     // Auto-clear message after 5 seconds
-    useEffect(() => {
-        if (message.text) {
-            const timer = setTimeout(() => setMessage({ type: '', text: '' }), 5000);
-            return () => clearTimeout(timer);
-        }
-    }, [message]);
+    // Clean up timer removed (Toast handles auto-dismiss)
 
 
 
@@ -441,22 +435,13 @@ export default function Settings() {
                     <p className="text-chess-text-secondary">Manage your account, preferences, and board customization</p>
                 </div>
 
-                {/* Message Banner */}
-                {message.text && (
-                    <div className={`mb-6 p-4 rounded-xl border flex items-center gap-3 transition-all animate-in ${message.type === 'success'
-                            ? 'bg-chess-status-success/10 border-chess-status-success/30 text-chess-status-success'
-                            : 'bg-chess-status-error/10 border-chess-status-error/30 text-chess-status-error'
-                        }`}>
-                        {message.type === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-                        {message.text}
-                    </div>
-                )}
+
 
                 {/* ─── 1. Lichess Account Section ─────────────────────────── */}
-                <div className="bg-chess-panel border border-white/5 rounded-2xl p-6 mb-6">
+                <div className="bg-chess-panel border border-white/5 rounded-2xl p-8 mb-6">
                     <div className="flex items-center gap-3 mb-4">
-                        <Link2 className="text-chess-accent" size={24} />
-                        <h2 className="text-xl font-bold text-white">Lichess Connection</h2>
+                        <Globe className="text-chess-accent" size={28} />
+                        <h2 className="text-2xl font-bold text-white">Lichess Connection</h2>
                     </div>
 
                     {userProfile?.lichessUsername ? (
@@ -478,7 +463,17 @@ export default function Settings() {
                                 disabled={saving}
                                 className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5"
                             >
-                                <Trash2 size={14} /> Disconnect Account
+                                {saving ? (
+                                    <>
+                                        <Loader2 size={14} className="animate-spin" />
+                                        Disconnecting...
+                                    </>
+                                ) : (
+                                    <>
+                                        <UserMinus size={14} />
+                                        Disconnect Account
+                                    </>
+                                )}
                             </button>
                         </div>
                     ) : (
@@ -517,9 +512,19 @@ export default function Settings() {
                                 <button
                                     onClick={handleLinkLichess}
                                     disabled={saving || verifyState === 'loading' || verifyState === 'invalid'}
-                                    className="px-6 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-lg font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="px-6 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-lg font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                 >
-                                    {saving ? 'Saving...' : 'Link Account'}
+                                    {saving ? (
+                                        <>
+                                            <Loader2 size={16} className="animate-spin" />
+                                            Saving...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <UserPlus size={16} />
+                                            Link Account
+                                        </>
+                                    )}
                                 </button>
                             </div>
 
@@ -542,10 +547,10 @@ export default function Settings() {
                 </div>
 
                 {/* ─── 2. Profile Customization ───────────────────────────── */}
-                <div className="bg-chess-panel border border-white/5 rounded-2xl p-6 mb-6">
+                <div className="bg-chess-panel border border-white/5 rounded-2xl p-8 mb-6">
                     <div className="flex items-center gap-3 mb-6">
-                        <User className="text-chess-accent" size={24} />
-                        <h2 className="text-xl font-bold text-white">Profile Customization</h2>
+                        <User className="text-chess-accent" size={28} />
+                        <h2 className="text-2xl font-bold text-white">Profile Customization</h2>
                     </div>
 
                     <div className="space-y-6">
@@ -579,7 +584,7 @@ export default function Settings() {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
+                                <div className="grid grid-cols-4 sm:grid-cols-7 gap-3">
                                     {[
                                         { id: 'king', label: 'King', url: 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg' },
                                         { id: 'queen', label: 'Queen', url: 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg' },
@@ -594,14 +599,14 @@ export default function Settings() {
                                                 key={piece.id}
                                                 type="button"
                                                 onClick={() => setPhotoUrl(piece.url)}
-                                                className={`flex flex-col items-center gap-1 p-1.5 rounded-lg border transition-all ${
+                                                className={`flex flex-col items-center gap-1 p-2.5 rounded-lg border transition-all ${
                                                     isSelected
                                                         ? 'border-chess-accent bg-chess-accent/10 shadow-sm'
                                                         : 'border-white/5 bg-black/20 hover:border-white/10'
                                                 }`}
                                             >
-                                                <img src={piece.url} alt={piece.label} className="w-6 h-6 object-contain" />
-                                                <span className="text-[9px] font-semibold text-chess-text-secondary">{piece.label}</span>
+                                                <img src={piece.url} alt={piece.label} className="w-8 h-8 object-contain" />
+                                                <span className="text-[10px] font-semibold text-chess-text-secondary">{piece.label}</span>
                                             </button>
                                         );
                                     })}
@@ -609,7 +614,7 @@ export default function Settings() {
                                     <button
                                         type="button"
                                         onClick={() => fileInputRef.current?.click()}
-                                        className={`flex flex-col items-center justify-center gap-1 p-1.5 rounded-lg border transition-all ${
+                                        className={`flex flex-col items-center justify-center gap-1 p-2.5 rounded-lg border transition-all ${
                                             photoUrl && ![
                                                 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg',
                                                 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg',
@@ -623,7 +628,7 @@ export default function Settings() {
                                         }`}
                                     >
                                         <Upload size={14} className="text-chess-text-secondary" />
-                                        <span className="text-[9px] font-semibold text-chess-text-secondary">Upload</span>
+                                        <span className="text-[10px] font-semibold text-chess-text-secondary">Upload</span>
                                     </button>
                                 </div>
 
@@ -663,20 +668,20 @@ export default function Settings() {
                                 <Sparkles size={16} className="text-chess-accent" />
                                 Profile Flair / Badge
                             </label>
-                            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                            <div className="grid grid-cols-4 sm:grid-cols-8 gap-3">
                                 {CHESS_FLAIRS.map(f => (
                                     <button
                                         key={f.id}
                                         onClick={() => setFlair(f.id)}
-                                        className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all ${
+                                        className={`flex flex-col items-center gap-1 p-3 rounded-xl border transition-all ${
                                             flair === f.id
                                                 ? 'border-chess-accent bg-chess-accent/10 shadow-lg shadow-chess-accent/10'
                                                 : 'border-white/5 bg-white/[0.02] hover:border-white/15 hover:bg-white/5'
                                         }`}
                                         title={f.label}
                                     >
-                                        <span className="text-xl">{f.emoji || '—'}</span>
-                                        <span className={`text-[9px] font-bold truncate w-full text-center ${flair === f.id ? 'text-chess-accent' : 'text-chess-text-secondary'}`}>
+                                        <span className="text-2xl">{f.emoji || '—'}</span>
+                                        <span className={`text-[10px] font-bold truncate w-full text-center ${flair === f.id ? 'text-chess-accent' : 'text-chess-text-secondary'}`}>
                                             {f.label}
                                         </span>
                                     </button>
@@ -710,30 +715,34 @@ export default function Settings() {
                 </div>
 
                 {/* ─── 3. Board Theme ─────────────────────────────────────── */}
-                <div className="bg-chess-panel border border-white/5 rounded-2xl p-6 mb-6">
+                <div className="bg-chess-panel border border-white/5 rounded-2xl p-8 mb-6">
                     <div className="flex items-center gap-3 mb-4">
-                        <Palette className="text-chess-accent" size={24} />
-                        <h2 className="text-xl font-bold text-white">Board Color Theme</h2>
+                        <Palette className="text-chess-accent" size={28} />
+                        <h2 className="text-2xl font-bold text-white">Board Color Theme</h2>
                     </div>
                     <p className="text-sm text-chess-text-secondary mb-4">Choose your preferred board colors for the training arena</p>
 
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                         {BOARD_THEMES.map(theme => (
                             <MiniBoardPreview
                                 key={theme.id}
                                 theme={theme}
                                 selected={settings.boardTheme === theme.id}
-                                onClick={() => setSettings({ ...settings, boardTheme: theme.id })}
+                                onClick={() => {
+                                    const updated = { ...settings, boardTheme: theme.id };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
                             />
                         ))}
                     </div>
                 </div>
 
                 {/* ─── 4. Piece Set ───────────────────────────────────────── */}
-                <div className="bg-chess-panel border border-white/5 rounded-2xl p-6 mb-6">
+                <div className="bg-chess-panel border border-white/5 rounded-2xl p-8 mb-6">
                     <div className="flex items-center gap-3 mb-4">
-                        <Crown className="text-chess-accent" size={24} />
-                        <h2 className="text-xl font-bold text-white">Chess Pieces Set</h2>
+                        <Crown className="text-chess-accent" size={28} />
+                        <h2 className="text-2xl font-bold text-white">Chess Pieces Set</h2>
                     </div>
                     <p className="text-sm text-chess-text-secondary mb-4">Choose your preferred piece rendering style (showing Kings preview)</p>
 
@@ -743,17 +752,21 @@ export default function Settings() {
                                 key={ps.id}
                                 pieceSet={ps}
                                 selected={settings.pieceSet === ps.id}
-                                onClick={() => setSettings({ ...settings, pieceSet: ps.id })}
+                                onClick={() => {
+                                    const updated = { ...settings, pieceSet: ps.id };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
                             />
                         ))}
                     </div>
                 </div>
 
                 {/* ─── 5. Preferences & Settings ─────────────────────────── */}
-                <div className="bg-chess-panel border border-white/5 rounded-2xl p-6 mb-6">
+                <div className="bg-chess-panel border border-white/5 rounded-2xl p-8 mb-6">
                     <div className="flex items-center gap-3 mb-4">
-                        <Shield className="text-chess-accent" size={24} />
-                        <h2 className="text-xl font-bold text-white">Preferences</h2>
+                        <Shield className="text-chess-accent" size={28} />
+                        <h2 className="text-2xl font-bold text-white">Preferences</h2>
                     </div>
 
                     <div className="space-y-6">
@@ -777,7 +790,14 @@ export default function Settings() {
                                             let val = parseInt(e.target.value);
                                             if (isNaN(val) || val < 600) val = 600;
                                             else if (val > 1800) val = 1800;
-                                            setSettings({ ...settings, minElo: val });
+                                            const updated = { ...settings, minElo: val };
+                                            setSettings(updated);
+                                            handleAutoSaveSettings(updated);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.target.blur();
+                                            }
                                         }}
                                         className="w-16 px-1.5 py-0.5 bg-chess-accent/10 border border-chess-accent/20 text-chess-accent text-xs font-mono font-bold rounded text-center focus:outline-none focus:border-chess-accent/50 focus:ring-0"
                                     />
@@ -793,6 +813,18 @@ export default function Settings() {
                                 step="50"
                                 value={settings.minElo || 600}
                                 onChange={(e) => setSettings({ ...settings, minElo: parseInt(e.target.value) })}
+                                onMouseUp={(e) => {
+                                    const val = parseInt(e.target.value);
+                                    const updated = { ...settings, minElo: val };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
+                                onTouchEnd={(e) => {
+                                    const val = parseInt(e.target.value);
+                                    const updated = { ...settings, minElo: val };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
                                 className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-chess-accent focus:outline-none focus:ring-0"
                             />
                             <p className="text-xs text-chess-text-secondary mt-1">
@@ -821,7 +853,14 @@ export default function Settings() {
                                             let val = parseInt(e.target.value);
                                             if (isNaN(val) || val < 10) val = 10;
                                             else if (val > 18) val = 18;
-                                            setSettings({ ...settings, engineDepth: val });
+                                            const updated = { ...settings, engineDepth: val };
+                                            setSettings(updated);
+                                            handleAutoSaveSettings(updated);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.target.blur();
+                                            }
                                         }}
                                         className="w-12 px-1.5 py-0.5 bg-chess-accent/10 border border-chess-accent/20 text-chess-accent text-xs font-mono font-bold rounded text-center focus:outline-none focus:border-chess-accent/50 focus:ring-0"
                                     />
@@ -839,6 +878,18 @@ export default function Settings() {
                                 step="1"
                                 value={settings.engineDepth || 10}
                                 onChange={(e) => setSettings({ ...settings, engineDepth: parseInt(e.target.value) })}
+                                onMouseUp={(e) => {
+                                    const val = parseInt(e.target.value);
+                                    const updated = { ...settings, engineDepth: val };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
+                                onTouchEnd={(e) => {
+                                    const val = parseInt(e.target.value);
+                                    const updated = { ...settings, engineDepth: val };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
                                 className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-chess-accent focus:outline-none"
                             />
                             <p className="text-xs text-chess-text-secondary mt-1">
@@ -855,26 +906,14 @@ export default function Settings() {
                                 </p>
                             </div>
                             <button
-                                onClick={() => setSettings({ ...settings, showCoordinates: !settings.showCoordinates })}
+                                onClick={() => {
+                                    const updated = { ...settings, showCoordinates: !settings.showCoordinates };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
                                 className={`relative w-12 h-6 rounded-full transition-colors ${settings.showCoordinates ? 'bg-chess-accent' : 'bg-white/10'}`}
                             >
                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${settings.showCoordinates ? 'translate-x-7' : 'translate-x-1'}`} />
-                            </button>
-                        </div>
-
-                        {/* Move Sound Effects Toggle */}
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="font-bold text-white">Move Sound Effects</p>
-                                <p className="text-xs text-chess-text-secondary">
-                                    Enable audio sound cues during training arena captures, checks, and moves
-                                </p>
-                            </div>
-                            <button
-                                onClick={() => setSettings({ ...settings, soundEnabled: !settings.soundEnabled })}
-                                className={`relative w-12 h-6 rounded-full transition-colors ${settings.soundEnabled ? 'bg-chess-accent' : 'bg-white/10'}`}
-                            >
-                                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${settings.soundEnabled ? 'translate-x-7' : 'translate-x-1'}`} />
                             </button>
                         </div>
 
@@ -887,29 +926,24 @@ export default function Settings() {
                                 </p>
                             </div>
                             <button
-                                onClick={() => setSettings({ ...settings, autoNext: !settings.autoNext })}
+                                onClick={() => {
+                                    const updated = { ...settings, autoNext: !settings.autoNext };
+                                    setSettings(updated);
+                                    handleAutoSaveSettings(updated);
+                                }}
                                 className={`relative w-12 h-6 rounded-full transition-colors ${settings.autoNext ? 'bg-chess-accent' : 'bg-white/10'}`}
                             >
                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${settings.autoNext ? 'translate-x-7' : 'translate-x-1'}`} />
                             </button>
                         </div>
                     </div>
-
-                    <button
-                        onClick={handleSaveSettings}
-                        disabled={saving}
-                        className="mt-6 w-full px-6 py-3 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-lg font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                        <Save size={20} />
-                        {saving ? 'Saving...' : 'Save Preferences'}
-                    </button>
                 </div>
 
                 {/* ─── 6. Profile & Data Maintenance ────────────────────── */}
-                <div className="bg-chess-panel border border-white/5 rounded-2xl p-6 mb-8">
+                <div className="bg-chess-panel border border-white/5 rounded-2xl p-8 mb-8">
                     <div className="flex items-center gap-3 mb-2">
-                        <Shield className="text-chess-accent" size={24} />
-                        <h2 className="text-xl font-bold text-white">Profile & Data Maintenance</h2>
+                        <Shield className="text-chess-accent" size={28} />
+                        <h2 className="text-2xl font-bold text-white">Profile & Data Maintenance</h2>
                     </div>
                     <p className="text-chess-text-secondary text-sm mb-4">
                         Perform database maintenance on your account. This allows you to permanently purge your local profile stats, custom playlists, imported puzzles, and settings, resetting your account to a clean state.
@@ -931,6 +965,13 @@ export default function Settings() {
                 onClose={() => setClearModalOpen(false)}
                 onConfirm={handleClearAllData}
                 clearing={clearing}
+            />
+
+            {/* Modern Premium Toast Notifications */}
+            <Toast
+                message={toast.message}
+                type={toast.type}
+                onClose={() => setToast({ message: '', type: 'success' })}
             />
         </DashboardLayout>
     );
