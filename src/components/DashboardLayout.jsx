@@ -18,7 +18,6 @@ import {
     Target,
     Brain
 } from 'lucide-react';
-import { getUserProfile } from '../services/userService';
 
 export default function DashboardLayout({ children }) {
     const { user, logout } = useAuth();

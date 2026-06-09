@@ -13,7 +13,7 @@ import {
     RotateCcw, Upload, FileText, Search, ShieldAlert, Cpu, Sparkles, HelpCircle, Star, Save,
     Clock, Calendar, Hash, Home, AlertCircle, XCircle, CheckCircle, ArrowRight, History
 } from 'lucide-react';
-import { saveCustomPuzzle, getUserPlaylists } from '../services/puzzleService';
+import { saveCustomPuzzle } from '../services/puzzleService';
 import { analyzeUserGames } from '../services/analysisOrchestrator';
 
 // Import chessground CSS
@@ -61,8 +61,6 @@ export default function AnalysisBoard() {
     const playTimerRef = useRef(null);
 
     // Custom Puzzle Saving state
-    const [playlists, setPlaylists] = useState([]);
-    const [saveFormOpen, setSaveFormOpen] = useState(false);
     const [savePuzzleColor, setSavePuzzleColor] = useState('white');
     const [savePuzzleName, setSavePuzzleName] = useState('');
     const [savePuzzleOpening, setSavePuzzleOpening] = useState('');
@@ -147,9 +145,7 @@ export default function AnalysisBoard() {
                 setPieceSet(getPieceSet('cburnett'));
             });
 
-            getUserPlaylists(user.uid).then(list => {
-                setPlaylists(list);
-            }).catch(() => {});
+
         } else {
             setBoardTheme(getBoardTheme('classic'));
             setPieceSet(getPieceSet('cburnett'));
@@ -195,7 +191,6 @@ export default function AnalysisBoard() {
             setSavePuzzleOpening('');
             setSavePuzzleMove('');
             setTimeout(() => {
-                setSaveFormOpen(false);
                 setSaveStatus({ type: '', text: '' });
             }, 3000);
         } catch (err) {

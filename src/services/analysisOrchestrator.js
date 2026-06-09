@@ -10,7 +10,7 @@
  * 6. Mark games as processed
  */
 
-import { getLichessUsername, getUserProfile } from './userService';
+import { getUserProfile } from './userService';
 import { saveNewPuzzles, isGameProcessed, markGameProcessed } from './puzzleService';
 import { lichessApi } from '../lib/lichessApi';
 import { gameAnalyzer } from '../lib/gameAnalyzer';
