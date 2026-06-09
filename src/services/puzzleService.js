@@ -299,21 +299,24 @@ export async function logPuzzleAttempt(userId, puzzleId, result, timeTaken, move
 }
 
 /**
- * Check if a game has already been processed
+ * Check if a game has already been processed by this user
  */
-export async function isGameProcessed(gameId) {
-    const gameRef = doc(db, 'processed_games', gameId);
+export async function isGameProcessed(userId, gameId) {
+    const docId = `${userId}_${gameId}`;
+    const gameRef = doc(db, 'processed_games', docId);
     const gameSnap = await getDoc(gameRef);
     return gameSnap.exists();
 }
 
 /**
- * Mark a game as processed (deduplication)
+ * Mark a game as processed for this user (deduplication)
  */
 export async function markGameProcessed(userId, gameId, puzzleCount) {
-    const gameRef = doc(db, 'processed_games', gameId);
+    const docId = `${userId}_${gameId}`;
+    const gameRef = doc(db, 'processed_games', docId);
     await setDoc(gameRef, {
         userId,
+        gameId,
         analyzedAt: serverTimestamp(),
         puzzleCount
     });
@@ -391,49 +394,57 @@ export async function deletePuzzle(userId, puzzleId) {
  * 3. Review puzzles (backlog)
  */
 export async function getNextPuzzle(userId, excludeIds = []) {
-    // Ensure excludeIds is an array
     const excludes = Array.isArray(excludeIds) ? excludeIds : (excludeIds ? [excludeIds] : []);
 
-    // 1. Try to find an active puzzle (failed previously)
-    let q = query(
-        collection(db, 'puzzles'),
-        where('userId', '==', userId),
-        where('status', '==', 'active'),
-        orderBy('reviewState.lastAttempt', 'asc'),
-        limit(50)
-    );
+    try {
+        // Fetch all puzzles for this user (index-free query using single-field userId filter)
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        const allPuzzles = snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
 
-    let snapshot = await getDocs(q);
-    let candidates = snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
+        // 1. Try to find an active puzzle (failed previously)
+        let activeCandidates = allPuzzles.filter(p => p.status === 'active' && !excludes.includes(p.id));
+        if (activeCandidates.length > 0) {
+            // Sort by reviewState.lastAttempt asc (oldest attempts first)
+            activeCandidates.sort((a, b) => {
+                const aTime = a.reviewState?.lastAttempt?.toMillis?.() || 0;
+                const bTime = b.reviewState?.lastAttempt?.toMillis?.() || 0;
+                return aTime - bTime;
+            });
+            const top50 = activeCandidates.slice(0, 50);
+            return top50[Math.floor(Math.random() * top50.length)];
+        }
 
-    // Filter out all excluded IDs
-    if (excludes.length > 0) {
-        candidates = candidates.filter(p => !excludes.includes(p.id));
-    }
+        // 2. Try to find a new puzzle
+        let newCandidates = allPuzzles.filter(p => p.status === 'new' && !excludes.includes(p.id));
+        if (newCandidates.length > 0) {
+            // Sort by createdAt desc (newest first)
+            newCandidates.sort((a, b) => {
+                const aTime = a.createdAt?.toMillis?.() || 0;
+                const bTime = b.createdAt?.toMillis?.() || 0;
+                return bTime - aTime;
+            });
+            const top50 = newCandidates.slice(0, 50);
+            return top50[Math.floor(Math.random() * top50.length)];
+        }
 
-    // Pick random active puzzle
-    if (candidates.length > 0) {
-        return candidates[Math.floor(Math.random() * candidates.length)];
-    }
-
-    // 2. If no active (or all excluded), get a new puzzle
-    q = query(
-        collection(db, 'puzzles'),
-        where('userId', '==', userId),
-        where('status', '==', 'new'),
-        orderBy('createdAt', 'desc'),
-        limit(50)
-    );
-    snapshot = await getDocs(q);
-    candidates = snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
-
-    if (excludes.length > 0) {
-        candidates = candidates.filter(p => !excludes.includes(p.id));
-    }
-
-    // Pick random new puzzle
-    if (candidates.length > 0) {
-        return candidates[Math.floor(Math.random() * candidates.length)];
+        // 3. Fall back to solved puzzles so the user can review them and train even if all are solved
+        let solvedCandidates = allPuzzles.filter(p => p.status === 'solved' && !excludes.includes(p.id));
+        if (solvedCandidates.length > 0) {
+            // Sort by lastAttemptedAt asc (least recently trained first)
+            solvedCandidates.sort((a, b) => {
+                const aTime = a.lastAttemptedAt?.toMillis?.() || 0;
+                const bTime = b.lastAttemptedAt?.toMillis?.() || 0;
+                return aTime - bTime;
+            });
+            const top50 = solvedCandidates.slice(0, 50);
+            return top50[Math.floor(Math.random() * top50.length)];
+        }
+    } catch (e) {
+        console.error('getNextPuzzle failed:', e);
     }
 
     return null;
@@ -492,19 +503,22 @@ export async function getPuzzlesGroupedByOpening(userId) {
         snapshot.docs.forEach(d => {
             const data = d.data();
             const puzzle = normalizePuzzle(data, d.id);
-            const opening = puzzle.opening || 'Unknown Opening';
+            const fullOpening = puzzle.opening || 'Unknown Opening';
             
-            if (!openingGroups[opening]) {
-                openingGroups[opening] = {
-                    playlistIndex: opening, // use opening title as the identifier
-                    title: opening,
+            // Extract main opening name (e.g. "Sicilian Defense: Najdorf" -> "Sicilian Defense")
+            const mainOpening = fullOpening.split(':')[0].split(',')[0].split(' - ')[0].trim() || 'Unknown Opening';
+            
+            if (!openingGroups[mainOpening]) {
+                openingGroups[mainOpening] = {
+                    playlistIndex: mainOpening, // use main opening title as the identifier
+                    title: mainOpening,
                     total: 0,
                     solved: 0,
                     mastered: 0,
                     puzzles: []
                 };
             }
-            const group = openingGroups[opening];
+            const group = openingGroups[mainOpening];
             group.total++;
             if (data.reviewState?.isSolved) group.solved++;
             if (data.status === 'mastered') group.mastered++;
@@ -988,6 +1002,79 @@ export async function saveCustomPuzzle(userId, puzzle) {
     // Enforce limits and rotate oldest to next playlists (max 20 each)
     await enforcePlaylistLimits(userId);
     return puzzleRef.id;
+}
+
+/**
+ * Save pending scans to a temporary document field
+ */
+export async function savePendingPuzzles(userId, puzzles) {
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+        pendingScan: {
+            status: 'completed',
+            count: puzzles.length,
+            shown: false,
+            timestamp: Date.now(),
+            puzzles
+        }
+    });
+}
+
+/**
+ * Get pending scans from Firestore
+ */
+export async function getPendingPuzzles(userId) {
+    const userRef = doc(db, 'users', userId);
+    const snap = await getDoc(userRef);
+    if (!snap.exists()) return [];
+    return snap.data().pendingScan?.puzzles || [];
+}
+
+/**
+ * Clear pending scans from Firestore
+ */
+export async function clearPendingPuzzles(userId) {
+    // Reset user profile status
+    const userRef = doc(db, 'users', userId);
+    await updateDoc(userRef, {
+        pendingScan: deleteField()
+    }).catch(() => {});
+}
+
+/**
+ * Save approved puzzles in batch
+ */
+export async function saveApprovedPuzzles(userId, approvedPuzzles) {
+    const batch = writeBatch(db);
+    
+    approvedPuzzles.forEach(puzzle => {
+        const puzzleRef = doc(collection(db, 'puzzles'));
+        
+        batch.set(puzzleRef, {
+            fen: puzzle.fen,
+            correctMove: puzzle.correctMove,
+            customName: puzzle.customName || 'Blunder Position',
+            opening: puzzle.opening || 'Unknown Opening',
+            theme: puzzle.theme || 'Blunder',
+            userColor: puzzle.userColor || 'white',
+            type: 'opening_blunder',
+            userId,
+            isFavorite: puzzle.isFavorite || false,
+            playlistIndex: puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0,
+            status: 'new',
+            createdAt: serverTimestamp(),
+            reviewState: {
+                isSolved: false,
+                attempts: 0,
+                lastAttempt: null,
+                successCount: 0,
+                failCount: 0
+            }
+        });
+    });
+
+    await batch.commit();
+    await enforcePlaylistLimits(userId);
 }
 
 

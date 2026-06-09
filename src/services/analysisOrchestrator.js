@@ -11,7 +11,7 @@
  */
 
 import { getUserProfile } from './userService';
-import { saveNewPuzzles, isGameProcessed, markGameProcessed } from './puzzleService';
+import { isGameProcessed, markGameProcessed, getUserPlaylists, savePendingPuzzles, saveNewPuzzles } from './puzzleService';
 import { lichessApi } from '../lib/lichessApi';
 import { gameAnalyzer } from '../lib/gameAnalyzer';
 import { engineService } from './engineService';
@@ -31,6 +31,7 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
     } = options;
 
     const results = {
+        rawGamesFetched: 0,
         gamesFetched: 0,
         gamesAnalyzed: 0,
         gamesSkipped: 0,
@@ -56,6 +57,17 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
             throw new Error('No Lichess account linked. Please link your account in Settings.');
         }
 
+        // Calculate remaining playlist capacity space (max 60 total in standard playlists 1, 2, 3)
+        const playlists = await getUserPlaylists(userId);
+        const totalCurrentPuzzles = playlists
+            .filter(pl => pl.playlistIndex <= 2)
+            .reduce((sum, pl) => sum + pl.total, 0);
+        const maxNewPuzzlesAllowed = Math.max(0, 60 - totalCurrentPuzzles);
+
+        if (maxNewPuzzlesAllowed === 0) {
+            throw new Error('Ingestion blocked: Your training playlists are fully populated (60/60 puzzles). Clear some playlists or train them to free up space.');
+        }
+
         // Step 2: Fetch recent games from Lichess
         onProgress({ stage: `Fetching games for ${lichessUsername}...`, progress: 10 });
         
@@ -67,6 +79,7 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
         const perfType = timeControls.join(',');
 
         const games = await lichessApi.fetchUserGames(lichessUsername, maxGames, perfType, since);
+        results.rawGamesFetched = games.length;
         
         // Filter games based on user's minElo setting (at least one player must be >= minElo)
         const filteredGames = games.filter(g => {
@@ -88,7 +101,7 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
 
         for (const game of filteredGames) {
             const gameId = game.id;
-            const alreadyProcessed = await isGameProcessed(gameId);
+            const alreadyProcessed = await isGameProcessed(userId, gameId);
 
             if (!alreadyProcessed) {
                 newGames.push(game);
@@ -104,8 +117,15 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
 
         // Step 4 & 5: Analyze each game and collect puzzles
         const allPuzzles = [];
+        let puzzlesCount = 0;
 
         for (let i = 0; i < newGames.length; i++) {
+            // Stop analyzing immediately if we hit our capacity limit
+            if (puzzlesCount >= maxNewPuzzlesAllowed) {
+                console.log(`Scan stopped early: reached maximum playlist capacity space (${maxNewPuzzlesAllowed})`);
+                break;
+            }
+
             const game = newGames[i];
             const gameId = game.id;
             const progress = 20 + ((i + 1) / newGames.length) * 60; // 20-80%
@@ -121,15 +141,19 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
                 const puzzles = await gameAnalyzer.analyze(game, lichessUsername === game.players?.white?.user?.name ? 'white' : 'black', engineDepth);
 
                 if (puzzles && puzzles.length > 0) {
+                    const remainingSpace = maxNewPuzzlesAllowed - puzzlesCount;
+                    const puzzlesToTake = puzzles.slice(0, remainingSpace);
+
                     // Add gameId to each puzzle for tracking
-                    const puzzlesWithGameId = puzzles.map(puzzle => ({
+                    const puzzlesWithGameId = puzzlesToTake.map(puzzle => ({
                         ...puzzle,
                         gameId,
                         gameUrl: `https://lichess.org/${gameId}`
                     }));
 
                     allPuzzles.push(...puzzlesWithGameId);
-                    results.puzzlesGenerated += puzzles.length;
+                    puzzlesCount += puzzlesToTake.length;
+                    results.puzzlesGenerated += puzzlesToTake.length;
                 }
 
                 results.gamesAnalyzed++;
@@ -144,10 +168,10 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
             }
         }
 
-        // Step 7: Save all puzzles to Firestore with rotation
+        // Step 7: Save all puzzles to Firestore as PENDING (not final) so user can choose name/playlist
         if (allPuzzles.length > 0) {
-            onProgress({ stage: 'Saving puzzles to database...', progress: 90 });
-            await saveNewPuzzles(userId, allPuzzles);
+            onProgress({ stage: 'Saving pending puzzles to cache...', progress: 90 });
+            await savePendingPuzzles(userId, allPuzzles);
         }
 
         onProgress({
@@ -212,7 +236,7 @@ export async function quickAnalyze(userId, onProgress = () => { }) {
         const gameId = game.id;
 
         // Check if already processed
-        const alreadyProcessed = await isGameProcessed(gameId);
+        const alreadyProcessed = await isGameProcessed(userId, gameId);
         if (alreadyProcessed) {
             results.gamesSkipped = 1;
             onProgress({ stage: 'Game already analyzed', progress: 100 });

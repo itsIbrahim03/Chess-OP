@@ -358,15 +358,20 @@ export async function updateUserProfile(userId, profileData) {
 export async function clearAllAccountData(userId) {
     const userRef = doc(db, 'users', userId);
 
-    // Delete all puzzles
+    // Delete all puzzles for this user
     const puzzlesQ = query(collection(db, 'puzzles'), where('userId', '==', userId));
     const puzzleSnap = await getDocs(puzzlesQ);
     await Promise.all(puzzleSnap.docs.map(d => deleteDoc(d.ref)));
 
-    // Delete all processed_games
+    // Delete all processed_games for this user
     const gamesQ = query(collection(db, 'processed_games'), where('userId', '==', userId));
     const gamesSnap = await getDocs(gamesQ);
     await Promise.all(gamesSnap.docs.map(d => deleteDoc(d.ref)));
+
+    // Delete all activity_logs for this user
+    const logsQ = query(collection(db, 'activity_logs'), where('userId', '==', userId));
+    const logsSnap = await getDocs(logsQ);
+    await Promise.all(logsSnap.docs.map(d => deleteDoc(d.ref)));
 
     // Reset user profile to defaults
     await updateDoc(userRef, {
@@ -380,7 +385,8 @@ export async function clearAllAccountData(userId) {
         'stats.totalGamesAnalyzed': 0,
         'settings.boardTheme': 'classic',
         'settings.pieceSet': 'cburnett',
-        lastScan: null
+        lastScan: null,
+        pendingScan: null
     });
 
     return { deletedPuzzles: puzzleSnap.size, deletedGames: gamesSnap.size };
