@@ -20,7 +20,8 @@ import {
     query,
     where,
     getDocs,
-    deleteDoc
+    deleteDoc,
+    deleteField
 } from 'firebase/firestore';
 
 
@@ -54,8 +55,8 @@ export async function initializeUserProfile(user) {
         lichessUsername: '',
         lichessConnectedAt: null,
 
-        // Rotation Logic
-        rotationCount: 0,
+        // Playlists (initially empty map to allow creating custom playlists)
+        playlistNames: {},
 
         // Dashboard Stats
         stats: {
@@ -67,11 +68,12 @@ export async function initializeUserProfile(user) {
 
         // User Preferences
         settings: {
-            theme: 'dark',
             minElo: 1000,
-            autoAnalyze: false,
             boardTheme: 'classic',
-            pieceSet: 'cburnett'
+            pieceSet: 'cburnett',
+            showCoordinates: true,
+            autoNext: false,
+            engineDepth: 14
         },
 
         // Metadata
@@ -92,9 +94,9 @@ export async function completeOnboarding(userId, { displayName, lichessUsername,
     await updateDoc(userRef, {
         displayName: displayName.trim() || 'Player',
         lichessUsername: lichessUsername.trim() || '',
-        'settings.autoAnalyze': settings?.autoAnalyze ?? false,
         'settings.minElo': settings?.minElo ?? 1000,
-        onboardingCompleted: true
+        onboardingCompleted: true,
+        showWelcomeTour: true
     });
 }
 
@@ -112,7 +114,32 @@ export async function getUserProfile(userId) {
         throw new Error('User profile not found');
     }
 
-    return { id: userSnap.id, ...userSnap.data() };
+    const data = userSnap.data();
+
+    // Silent database migration to remove unused deprecated fields
+    const deletes = {};
+    if (data.rotationCount !== undefined) deletes.rotationCount = deleteField();
+    if (data.settings?.theme !== undefined) deletes['settings.theme'] = deleteField();
+    if (data.settings?.autoAnalyze !== undefined) deletes['settings.autoAnalyze'] = deleteField();
+    if (data.settings?.accentColor !== undefined) deletes['settings.accentColor'] = deleteField();
+    if (data.settings?.notificationsEnabled !== undefined) deletes['settings.notificationsEnabled'] = deleteField();
+    if (data.settings?.soundEnabled !== undefined) deletes['settings.soundEnabled'] = deleteField();
+    if (data.settings?.piecesSet !== undefined) deletes['settings.piecesSet'] = deleteField();
+
+    if (Object.keys(deletes).length > 0) {
+        await updateDoc(userRef, deletes);
+        delete data.rotationCount;
+        if (data.settings) {
+            delete data.settings.theme;
+            delete data.settings.autoAnalyze;
+            delete data.settings.accentColor;
+            delete data.settings.notificationsEnabled;
+            delete data.settings.soundEnabled;
+            delete data.settings.piecesSet;
+        }
+    }
+
+    return { id: userSnap.id, ...data };
 }
 
 /**
@@ -224,7 +251,7 @@ export async function updateDailyStreak(userId) {
     let newStreak = currentStreak;
     let shouldUpdate = true;
 
-    if (lastActive) {
+    if (lastActive && currentStreak > 0) {
         const lastDay = new Date(lastActive);
         lastDay.setHours(0, 0, 0, 0);
 
@@ -241,8 +268,9 @@ export async function updateDailyStreak(userId) {
             newStreak = 1;
         }
     } else {
-        // First ever visit
+        // First ever visit or streak is currently 0
         newStreak = 1;
+        shouldUpdate = true;
     }
 
     if (shouldUpdate) {
@@ -344,6 +372,7 @@ export async function updateUserProfile(userId, profileData) {
     if (profileData.country !== undefined) updates.country = profileData.country;
     if (profileData.flair !== undefined) updates.flair = profileData.flair;
     if (profileData.photoUrl !== undefined) updates.photoUrl = profileData.photoUrl;
+    if (profileData.showWelcomeTour !== undefined) updates.showWelcomeTour = profileData.showWelcomeTour;
 
     await updateDoc(userRef, updates);
 }
@@ -357,6 +386,8 @@ export async function updateUserProfile(userId, profileData) {
  */
 export async function clearAllAccountData(userId) {
     const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    const data = userSnap.exists() ? userSnap.data() : {};
 
     // Delete all puzzles for this user
     const puzzlesQ = query(collection(db, 'puzzles'), where('userId', '==', userId));
@@ -373,20 +404,41 @@ export async function clearAllAccountData(userId) {
     const logsSnap = await getDocs(logsQ);
     await Promise.all(logsSnap.docs.map(d => deleteDoc(d.ref)));
 
-    // Reset user profile to defaults
+    // Reset user profile to defaults matching the database schema, removing all deprecated fields
     await updateDoc(userRef, {
-        lichessUsername: '',
-        lichessConnectedAt: null,
-        rotationCount: 0,
-        country: '',
-        flair: '',
-        'stats.totalSolved': 0,
-        'stats.streak': 0,
-        'stats.totalGamesAnalyzed': 0,
-        'settings.boardTheme': 'classic',
-        'settings.pieceSet': 'cburnett',
+        lichessUsername: data.lichessUsername || '',
+        lichessConnectedAt: data.lichessConnectedAt || null,
+        country: 'PW',
+        flair: 'trophy',
+        photoUrl: data.photoUrl || 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
+        playlistNames: {}, // Reset to empty map to allow creating custom playlists correctly
+        showWelcomeTour: false,
         lastScan: null,
-        pendingScan: null
+        pendingScan: null,
+        
+        // Remove unused/deprecated fields completely
+        rotationCount: deleteField(),
+        'settings.theme': deleteField(),
+        'settings.autoAnalyze': deleteField(),
+        'settings.piecesSet': deleteField(),
+        'settings.accentColor': deleteField(),
+        'settings.notificationsEnabled': deleteField(),
+        'settings.soundEnabled': deleteField(),
+
+        settings: {
+            showCoordinates: true,
+            pieceSet: 'cburnett',
+            autoNext: false,
+            minElo: 1450,
+            engineDepth: 14,
+            boardTheme: 'classic'
+        },
+        stats: {
+            lastActive: serverTimestamp(),
+            totalSolved: 0,
+            totalGamesAnalyzed: 0,
+            streak: 0
+        }
     });
 
     return { deletedPuzzles: puzzleSnap.size, deletedGames: gamesSnap.size };

@@ -185,6 +185,11 @@ function ConfirmClearModal({ open, onClose, onConfirm, clearing }) {
                         type="text"
                         value={typed}
                         onChange={(e) => setTyped(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && confirmed && !clearing) {
+                                onConfirm();
+                            }
+                        }}
                         placeholder="RESET MY ACCOUNT"
                         className="w-full px-4 py-3 bg-chess-bg border border-white/10 rounded-xl text-white placeholder:text-white/20 focus:outline-none focus:border-chess-accent/50 transition-colors font-mono tracking-wider text-center"
                         autoFocus
@@ -257,13 +262,11 @@ export default function Settings() {
 
     // Settings
     const [settings, setSettings] = useState({
-        theme: 'dark',
         minElo: 1500,
         boardTheme: 'classic',
         pieceSet: 'cburnett',
         showCoordinates: true,
         autoNext: false,
-        accentColor: 'blue',
         engineDepth: 14
     });
 
@@ -291,13 +294,11 @@ export default function Settings() {
             setFlair(profile.flair || 'none');
             setPhotoUrl(profile.photoUrl || user?.photoURL || '');
             setSettings({
-                theme: profile.settings?.theme || 'dark',
                 minElo: profile.settings?.minElo || 1500,
                 boardTheme: profile.settings?.boardTheme || 'classic',
                 pieceSet: profile.settings?.pieceSet || 'cburnett',
                 showCoordinates: profile.settings?.showCoordinates ?? true,
                 autoNext: profile.settings?.autoNext ?? false,
-                accentColor: profile.settings?.accentColor || 'blue',
                 engineDepth: profile.settings?.engineDepth || 14
             });
 
@@ -391,6 +392,12 @@ export default function Settings() {
         setClearing(true);
         try {
             const result = await clearAllAccountData(user.uid);
+            
+            // Clear client-side sessionStorage and custom localStorage keys
+            sessionStorage.clear();
+            localStorage.removeItem('sidebarOpen');
+            localStorage.removeItem('chess-op-remember-me');
+
             setClearModalOpen(false);
             setMessage({
                 type: 'success',

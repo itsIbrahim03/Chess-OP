@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { completeOnboarding, verifyLichessUsername } from '../services/userService';
-import { ArrowRight, User, Globe, Settings, ShieldCheck, Loader2 } from 'lucide-react';
+import { ArrowRight, User, Globe, Settings, ShieldCheck, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 
 export default function Onboarding() {
   const { user } = useAuth();
@@ -108,7 +108,7 @@ export default function Onboarding() {
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="e.g. Ibrahim"
+                  placeholder="Enter your name"
                   required
                   className="w-full bg-chess-bg/80 border border-white/10 text-white rounded-xl py-3.5 px-4 focus:outline-none focus:border-chess-accent/50 transition-colors"
                 />
@@ -136,10 +136,10 @@ export default function Onboarding() {
                       <Loader2 size={18} className="animate-spin text-chess-text-secondary" />
                     )}
                     {lichessVerifyState === 'valid' && (
-                      <span className="text-chess-status-success" title="Username verified">✓</span>
+                      <CheckCircle2 size={18} className="text-chess-status-success" title="Username verified" />
                     )}
                     {lichessVerifyState === 'invalid' && (
-                      <span className="text-chess-status-error" title="Username not found">✗</span>
+                      <XCircle size={18} className="text-chess-status-error" title="Username not found" />
                     )}
                   </div>
                 </div>
