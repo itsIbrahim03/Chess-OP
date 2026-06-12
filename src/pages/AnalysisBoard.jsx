@@ -1,22 +1,24 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import DashboardLayout from '../components/DashboardLayout';
 import { useAuth } from '../context/AuthContext';
 import { getUserProfile } from '../services/userService';
 import { Chess } from 'chess.js';
 import {
-    Cpu, Sparkles, AlertCircle, CheckCircle, XCircle, Home,
+    Cpu, Sparkles, AlertCircle, CheckCircle, XCircle, Home, Brain,
     Zap, Flame, Clock, Calendar, Hash, Save, Upload, FileText, Search, Play,
-    ChevronDown, Folder
+    ChevronDown, Folder, AlertTriangle, Loader2
 } from 'lucide-react';
-import { saveCustomPuzzle, getUserPlaylists } from '../services/puzzleService';
+import { saveCustomPuzzle, getUserPlaylists, createPlaylist, getPendingPuzzles, clearPendingPuzzles } from '../services/puzzleService';
 import { backgroundAnalysisService } from '../services/backgroundAnalysisService';
 import { getPieceImageUrl } from '../lib/pieceSets';
 import { engineService } from '../services/engineService';
+import { OpeningDetector } from '../lib/openingDetector';
 
 export default function AnalysisBoard() {
     const { user } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
     
     // Settings & Personalization
     const [lichessUsername, setLichessUsername] = useState('');
@@ -45,6 +47,10 @@ export default function AnalysisBoard() {
     // Playlists capacity states
     const [playlistsSpace, setPlaylistsSpace] = useState({ total: 0, isFull: false });
     const [availablePlaylists, setAvailablePlaylists] = useState([]);
+    const [totalPlaylistsCount, setTotalPlaylistsCount] = useState(0);
+    const [newPlaylistName, setNewPlaylistName] = useState('');
+    const [hasPendingPuzzles, setHasPendingPuzzles] = useState(false);
+    const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
     // Subscribe to background service status
     useEffect(() => {
@@ -71,6 +77,7 @@ export default function AnalysisBoard() {
             }).catch(() => {});
 
             getUserPlaylists(user.uid).then(allPlaylists => {
+                setTotalPlaylistsCount(allPlaylists.length);
                 const totalCurrent = allPlaylists
                     .filter(pl => pl.playlistIndex <= 2)
                     .reduce((sum, pl) => sum + pl.total, 0);
@@ -91,8 +98,12 @@ export default function AnalysisBoard() {
                     setSavePlaylistIdx('fav');
                 }
             }).catch(err => console.error(err));
+
+            getPendingPuzzles(user.uid).then(pending => {
+                setHasPendingPuzzles(pending && pending.length > 0);
+            }).catch(() => {});
         }
-    }, [user?.uid]);
+    }, [user?.uid, location.search]);
 
     // Handle Time Control selections
     const handleToggleTimeControl = (tc) => {
@@ -118,6 +129,18 @@ export default function AnalysisBoard() {
             return;
         }
 
+        // Check for pending unsaved puzzles first
+        try {
+            const pending = await getPendingPuzzles(user.uid);
+            if (pending && pending.length > 0) {
+                setHasPendingPuzzles(true);
+                navigate('?review=true');
+                return;
+            }
+        } catch (err) {
+            console.warn('Failed to check pending puzzles before scan:', err);
+        }
+
         setIngestError(null);
         setResults(null);
         backgroundAnalysisService.start(user.uid, {
@@ -130,6 +153,7 @@ export default function AnalysisBoard() {
     // Save puzzle manually
     const handleSavePuzzle = async () => {
         let targetFen = '';
+        let pgnOpening = '';
 
         if (importTab === 'fen') {
             if (!fenInput.trim()) {
@@ -152,6 +176,9 @@ export default function AnalysisBoard() {
                 const testChess = new Chess();
                 testChess.loadPgn(pgnInput.trim());
                 targetFen = testChess.fen();
+                
+                const headers = testChess.header();
+                pgnOpening = headers.Opening || headers.opening || '';
             } catch {
                 setSaveStatus({ type: 'error', text: 'Invalid PGN string' });
                 return;
@@ -192,21 +219,74 @@ export default function AnalysisBoard() {
                 return;
             }
 
-            setSaveStatus({ type: 'loading', text: 'Saving puzzle...' });
-            
+            let finalPlIdx = savePlaylistIdx;
             const isFav = savePlaylistIdx === 'fav';
-            const playlistIndex = isFav ? 0 : parseInt(savePlaylistIdx, 10);
+
+            if (savePlaylistIdx === 'create_new') {
+                if (!newPlaylistName.trim()) {
+                    setSaveStatus({ type: 'error', text: 'Please enter a name for the new playlist.' });
+                    return;
+                }
+                setSaveStatus({ type: 'loading', text: 'Creating new playlist...' });
+                const newIdx = await createPlaylist(user.uid, newPlaylistName);
+                finalPlIdx = newIdx.toString();
+                setNewPlaylistName('');
+            }
+
+            setSaveStatus({ type: 'loading', text: 'Saving puzzle...' });
+            const playlistIndex = isFav ? 0 : parseInt(finalPlIdx, 10);
+
+            let resolvedOpening = savePuzzleOpening.trim();
+            if (!resolvedOpening) {
+                resolvedOpening = pgnOpening;
+            }
+            if (!resolvedOpening) {
+                try {
+                    const detected = OpeningDetector.detect(targetFen);
+                    if (detected) {
+                        resolvedOpening = detected.name;
+                    }
+                } catch (e) {
+                    console.warn('Failed to detect opening from FEN:', e);
+                }
+            }
+            if (!resolvedOpening) {
+                resolvedOpening = 'Custom Import';
+            }
 
             await saveCustomPuzzle(user.uid, {
                 fen: targetFen,
                 correctMove: calculatedMove,
                 customName: savePuzzleName.trim() || 'Custom Position',
-                opening: savePuzzleOpening.trim() || 'Custom Import',
+                opening: resolvedOpening,
                 theme: 'Custom Ingestion',
                 userColor: savePuzzleColor,
                 isFavorite: isFav,
                 playlistIndex
             });
+
+            // Refresh playlists data
+            try {
+                const allPlaylists = await getUserPlaylists(user.uid);
+                setTotalPlaylistsCount(allPlaylists.length);
+                const totalCurrent = allPlaylists
+                    .filter(pl => pl.playlistIndex <= 2)
+                    .reduce((sum, pl) => sum + pl.total, 0);
+                setPlaylistsSpace({
+                    total: totalCurrent,
+                    isFull: totalCurrent >= 60
+                });
+
+                const available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
+                    index: pl.playlistIndex,
+                    title: pl.title,
+                    total: pl.total
+                }));
+                setAvailablePlaylists(available);
+                setSavePlaylistIdx(finalPlIdx);
+            } catch (e) {
+                console.error('Failed to reload playlists after save:', e);
+            }
 
             setSaveStatus({ type: 'success', text: `Puzzle saved successfully! Best move: ${calculatedMove}` });
             setSavePuzzleName('');
@@ -222,9 +302,26 @@ export default function AnalysisBoard() {
         }
     };
 
+    const handleDismissPending = async () => {
+        setShowDiscardConfirm(false);
+        setSaveStatus({ type: 'loading', text: 'Discarding pending puzzles...' });
+        try {
+            await clearPendingPuzzles(user.uid);
+            setHasPendingPuzzles(false);
+            setSaveStatus({ type: 'success', text: 'Pending puzzles discarded.' });
+            setTimeout(() => setSaveStatus({ type: '', text: '' }), 3000);
+        } catch (err) {
+            console.error('Failed to clear pending puzzles:', err);
+            setSaveStatus({ type: 'error', text: 'Failed to discard puzzles. Please try again.' });
+            setTimeout(() => setSaveStatus({ type: '', text: '' }), 3000);
+        }
+    };
+
     const selectedPlaylist = savePlaylistIdx === 'fav'
         ? { title: 'Starred / Favorites', total: null }
-        : availablePlaylists.find(pl => pl.index.toString() === savePlaylistIdx);
+        : savePlaylistIdx === 'create_new'
+            ? { title: 'Create New Playlist...', total: null }
+            : availablePlaylists.find(pl => pl.index.toString() === savePlaylistIdx);
 
     return (
         <DashboardLayout>
@@ -244,7 +341,7 @@ export default function AnalysisBoard() {
                     </div>
                 </div>
 
-                <div className="flex flex-col lg:flex-row gap-8">
+                <div className={`flex flex-col lg:flex-row gap-8 ${hasPendingPuzzles ? 'hidden' : ''}`}>
                     
                     {/* LEFT COLUMN: Lichess Automatic Scanner */}
                     <div className="flex-1 flex flex-col gap-6">
@@ -398,6 +495,8 @@ export default function AnalysisBoard() {
                                     <Cpu size={24} className="text-chess-accent" />
                                     <span>Lichess Scan Parameters</span>
                                 </h3>
+
+
 
                                 {playlistsSpace.isFull && (
                                     <div className="mb-8 flex items-start gap-4 bg-red-500/10 border border-red-500/25 p-5 rounded-2xl text-red-400">
@@ -702,15 +801,17 @@ export default function AnalysisBoard() {
                                         <div className="flex items-center gap-2">
                                             {savePlaylistIdx === 'fav' ? (
                                                 <span className="text-yellow-400">⭐</span>
+                                            ) : savePlaylistIdx === 'create_new' ? (
+                                                <span className="text-chess-accent">➕</span>
                                             ) : (
                                                 <Folder size={14} className="text-chess-accent" />
                                             )}
                                             <span className="font-semibold text-chess-text-primary text-left">
-                                                {savePlaylistIdx === 'fav' ? 'Starred / Favorites' : (selectedPlaylist?.title || 'Select Playlist')}
+                                                {savePlaylistIdx === 'fav' ? 'Starred / Favorites' : (savePlaylistIdx === 'create_new' ? 'Create New Playlist...' : (selectedPlaylist?.title || 'Select Playlist'))}
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
-                                            {savePlaylistIdx !== 'fav' && selectedPlaylist && (
+                                            {savePlaylistIdx !== 'fav' && savePlaylistIdx !== 'create_new' && selectedPlaylist && (
                                                 <span className="text-[10px] text-chess-text-secondary">({selectedPlaylist.total}/20)</span>
                                             )}
                                             <ChevronDown size={14} className={`text-chess-text-secondary transition-transform duration-200 ${isPlaylistDropdownOpen ? 'rotate-180' : ''}`} />
@@ -742,6 +843,25 @@ export default function AnalysisBoard() {
                                                         <span className="text-[10px] opacity-65">({pl.total}/20)</span>
                                                     </button>
                                                 ))}
+                                                {totalPlaylistsCount < 3 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSavePlaylistIdx('create_new');
+                                                            setIsPlaylistDropdownOpen(false);
+                                                        }}
+                                                        className={`w-full py-2 px-2.5 text-left text-xs font-semibold rounded-lg transition-all flex justify-between items-center cursor-pointer ${
+                                                            savePlaylistIdx === 'create_new'
+                                                                ? 'bg-chess-accent/15 text-white font-bold'
+                                                                : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2 text-chess-accent font-bold">
+                                                            <span>➕</span>
+                                                            <span>Create New Playlist...</span>
+                                                        </div>
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => {
@@ -765,6 +885,20 @@ export default function AnalysisBoard() {
                                     )}
                                 </div>
 
+                                {savePlaylistIdx === 'create_new' && (
+                                    <div className="space-y-1.5 animate-in slide-in-from-top-1 duration-200">
+                                        <label htmlFor="newPlaylistName" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">New Playlist Name</label>
+                                        <input
+                                            id="newPlaylistName"
+                                            type="text"
+                                            value={newPlaylistName}
+                                            onChange={(e) => setNewPlaylistName(e.target.value)}
+                                            placeholder="Enter playlist name..."
+                                            className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
+                                        />
+                                    </div>
+                                )}
+
 
                             </div>
 
@@ -779,6 +913,93 @@ export default function AnalysisBoard() {
                     </div>
 
                 </div>
+
+                {hasPendingPuzzles && (
+                    <div className="bg-chess-panel border border-white/5 rounded-3xl p-8 sm:p-12 shadow-xl relative overflow-hidden max-w-2xl mx-auto text-center flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 duration-200">
+                        <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/[0.02] rounded-full blur-3xl pointer-events-none" />
+                        <div className="absolute -inset-px bg-gradient-to-r from-amber-500/10 to-transparent rounded-3xl blur-[1px] -z-10" />
+                        
+                        <div className="w-16 h-16 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex items-center justify-center text-amber-500 shadow-lg shadow-amber-500/5">
+                            <Brain size={32} className="animate-pulse" />
+                        </div>
+                        
+                        <div>
+                            <h3 className="text-2xl font-serif font-bold text-white tracking-wide mb-2">Unsaved Scans Pending</h3>
+                            <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md mx-auto">
+                                You have unsaved blunder puzzles from your previous Lichess scan. 
+                                To maintain training deck organization and prevent capacity limit overflows, manual imports and new automatic scans are paused until you save or discard these puzzles.
+                            </p>
+                        </div>
+
+                        {saveStatus.text && (
+                            <div className={`w-full max-w-sm p-3 rounded-xl border text-xs flex items-center justify-center gap-2 animate-in ${
+                                saveStatus.type === 'success'
+                                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-450'
+                                    : saveStatus.type === 'error'
+                                        ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                                        : 'bg-white/5 border-white/10 text-chess-text-secondary'
+                            }`}>
+                                <span>{saveStatus.text}</span>
+                            </div>
+                        )}
+
+                        <div className="flex flex-col sm:flex-row gap-4 w-full justify-center pt-2">
+                            <button
+                                onClick={() => navigate('?review=true')}
+                                className="px-6 py-3.5 bg-chess-accent hover:bg-chess-accent-hover text-white font-bold rounded-xl text-sm transition-all shadow-lg shadow-chess-accent/15 cursor-pointer active:scale-[0.98] duration-200 hover:-translate-y-0.5"
+                            >
+                                Review & Save Puzzles
+                            </button>
+                            <button
+                                onClick={() => setShowDiscardConfirm(true)}
+                                className="px-6 py-3.5 bg-white/5 hover:bg-white/10 text-white rounded-xl font-bold transition-all border border-white/10 cursor-pointer active:scale-[0.98] duration-200 hover:-translate-y-0.5"
+                            >
+                                Discard Unsaved Puzzles
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {showDiscardConfirm && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        {/* Backdrop */}
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onClick={() => setShowDiscardConfirm(false)} />
+
+                        {/* Modal Card */}
+                        <div className="bg-chess-panel border border-amber-500/30 max-w-md w-full rounded-2xl shadow-2xl p-6 relative overflow-hidden animate-in fade-in zoom-in-95 duration-200 z-10">
+                            {/* Accent background glow */}
+                            <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 to-transparent pointer-events-none" />
+
+                            <div className="flex items-center gap-3 text-amber-500 mb-4">
+                                <AlertTriangle size={32} />
+                                <h3 className="text-xl font-bold font-serif text-white">Discard Unsaved Puzzles</h3>
+                            </div>
+
+                            <p className="text-chess-text-secondary text-sm mb-3 leading-relaxed">
+                                Are you sure you want to discard these pending blunder puzzles? They will be permanently removed from your cache.
+                            </p>
+
+                            <p className="bg-amber-500/10 border border-amber-500/20 text-amber-500 p-3 rounded-xl text-xs font-semibold leading-relaxed mb-6">
+                                ⚠️ Note: Discarding allows you to scan new games. The system will treat these games as unscanned in your future analyses.
+                            </p>
+
+                            <div className="flex items-center justify-end gap-3">
+                                <button
+                                    onClick={() => setShowDiscardConfirm(false)}
+                                    className="px-4 py-2 text-sm text-chess-text-secondary hover:text-white rounded-lg transition-colors cursor-pointer"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleDismissPending}
+                                    className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold text-sm transition-all shadow-lg shadow-amber-500/15 flex items-center gap-2 cursor-pointer"
+                                >
+                                    Yes, Discard Puzzles
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
             </div>
         </DashboardLayout>

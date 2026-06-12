@@ -242,12 +242,6 @@ export async function toggleFavorite(userId, puzzleId, isFavorite) {
     // PRIMARY: Update the puzzle's favorite status — must succeed
     const puzzleDocRef = doc(db, 'puzzles', puzzleId);
     await updateDoc(puzzleDocRef, { isFavorite });
-
-    // SECONDARY: Update rotation count — non-fatal if it fails
-    const userDocRef = doc(db, 'users', userId);
-    const incrementValue = isFavorite ? -1 : 1;
-    updateDoc(userDocRef, { rotationCount: increment(incrementValue) })
-        .catch(e => console.warn('rotationCount update failed (non-fatal):', e));
 }
 
 
@@ -373,18 +367,8 @@ export async function deletePuzzle(userId, puzzleId) {
         throw new Error('Unauthorized');
     }
 
-    const isFavorite = puzzleSnap.data().isFavorite;
-
     // Delete puzzle
     await deleteDoc(puzzleRef);
-
-    // Update rotation count if not a favorite
-    if (!isFavorite) {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-            rotationCount: increment(-1)
-        });
-    }
 }
 /**
  * Get the next puzzle for training
@@ -728,20 +712,6 @@ export async function getUserPlaylists(userId) {
             };
         });
 
-        // If we have absolutely nothing, ensure at least one default playlist appears
-        if (list.length === 0) {
-            list.push({
-                playlistIndex: 0,
-                title: "Playlist 1",
-                total: 0,
-                solved: 0,
-                mastered: 0,
-                progress: 0,
-                mastery: 'Novice',
-                puzzles: []
-            });
-        }
-
         list.sort((a, b) => a.playlistIndex - b.playlistIndex);
         return list;
 
@@ -852,15 +822,6 @@ export async function enforcePlaylistLimits(userId) {
         if (updated) {
             await batch.commit();
         }
-
-        // Recalculate total non-favorite count
-        const finalSnapshot = await getDocs(query(
-            collection(db, 'puzzles'),
-            where('userId', '==', userId),
-            where('isFavorite', '==', false)
-        ));
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, { rotationCount: finalSnapshot.size });
 
     } catch (e) {
         console.error('enforcePlaylistLimits failed:', e);
@@ -1034,11 +995,37 @@ export async function getPendingPuzzles(userId) {
  * Clear pending scans from Firestore
  */
 export async function clearPendingPuzzles(userId) {
-    // Reset user profile status
     const userRef = doc(db, 'users', userId);
+    try {
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+            const data = snap.data();
+            const pendingScan = data?.pendingScan;
+            if (pendingScan && Array.isArray(pendingScan.puzzles)) {
+                // Find all unique game IDs from the pending puzzles
+                const gameIds = [...new Set(pendingScan.puzzles.map(p => p.gameId).filter(Boolean))];
+                if (gameIds.length > 0) {
+                    const batch = writeBatch(db);
+                    gameIds.forEach(gameId => {
+                        const docId = `${userId}_${gameId}`;
+                        const gameRef = doc(db, 'processed_games', docId);
+                        batch.delete(gameRef);
+                    });
+                    await batch.commit();
+                    console.log(`Deleted ${gameIds.length} processed games from history for user ${userId}`);
+                }
+            }
+        }
+    } catch (err) {
+        console.error('Failed to unmark processed games on discard:', err);
+    }
+
+    // Reset user profile status
     await updateDoc(userRef, {
         pendingScan: deleteField()
-    }).catch(() => {});
+    }).catch((err) => {
+        console.error('Failed to delete pendingScan field:', err);
+    });
 }
 
 /**
@@ -1054,9 +1041,9 @@ export async function saveApprovedPuzzles(userId, approvedPuzzles) {
             fen: puzzle.fen,
             correctMove: puzzle.correctMove,
             customName: puzzle.customName || 'Blunder Position',
-            opening: puzzle.opening || 'Unknown Opening',
+            opening: puzzle.opening || puzzle.openingName || 'Unknown Opening',
             theme: puzzle.theme || 'Blunder',
-            userColor: puzzle.userColor || 'white',
+            userColor: puzzle.userColor || puzzle.playerColor || 'white',
             type: 'opening_blunder',
             userId,
             isFavorite: puzzle.isFavorite || false,
@@ -1075,6 +1062,38 @@ export async function saveApprovedPuzzles(userId, approvedPuzzles) {
 
     await batch.commit();
     await enforcePlaylistLimits(userId);
+}
+
+/**
+ * Ignore a specific pending puzzle:
+ * 1. Delete the corresponding processed_games document.
+ * 2. Update the user document's pendingScan list with the puzzle removed.
+ */
+export async function ignorePendingPuzzle(userId, gameId, puzzlesList, indexToIgnore) {
+    const batch = writeBatch(db);
+    
+    if (gameId) {
+        const docId = `${userId}_${gameId}`;
+        const gameRef = doc(db, 'processed_games', docId);
+        batch.delete(gameRef);
+    }
+    
+    const updatedPuzzles = puzzlesList.filter((_, idx) => idx !== indexToIgnore);
+    const userRef = doc(db, 'users', userId);
+    
+    if (updatedPuzzles.length === 0) {
+        batch.update(userRef, {
+            pendingScan: deleteField()
+        });
+    } else {
+        batch.update(userRef, {
+            'pendingScan.puzzles': updatedPuzzles,
+            'pendingScan.count': updatedPuzzles.length
+        });
+    }
+    
+    await batch.commit();
+    return updatedPuzzles;
 }
 
 

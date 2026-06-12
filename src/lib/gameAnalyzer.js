@@ -114,13 +114,15 @@ export class GameAnalyzer {
                         correctMove: preMoveAnalysis.bestMove,
                         playerMove: move.lan,
                         playedSan: move.san,
+                        opening: openingName,
                         openingName: openingName,
                         evaluation: userMoveScore,
                         bestEvaluation: preMoveAnalysis.score,
                         evalLoss: evalLoss,
                         gameUrl: `https://lichess.org/${game.id}#${i}`,
                         tags: ["Opening Blunder"],
-                        playerColor: playerColor
+                        playerColor: playerColor,
+                        userColor: playerColor
                     });
                 }
             }

@@ -384,6 +384,18 @@ export default function Repertoire() {
         }
     };
 
+    const handleTrainPlaylist = (puzzlesList) => {
+        if (!puzzlesList || puzzlesList.length === 0) return;
+        const puzzleIds = puzzlesList.map(p => p.id);
+        
+        // Shuffle puzzles from the playlist for the training queue
+        const shuffled = [...puzzleIds].sort(() => 0.5 - Math.random());
+        
+        sessionStorage.setItem('oneTimePlaylist', JSON.stringify(shuffled));
+        sessionStorage.setItem('oneTimeSessionResults', JSON.stringify([]));
+        navigate('/dashboard/train?session=one-time');
+    };
+
     // Launch 10-Puzzle Training Session (respects active filters)
     const handleLaunchSession = () => {
         const filteredPuzzles = filteredGroups.flatMap(g => g.filteredPuzzles);
@@ -615,8 +627,8 @@ export default function Repertoire() {
                         <Loader2 className="animate-spin text-chess-accent mb-4" size={40} />
                         <p className="text-chess-text-secondary font-medium">Gathering your repertoire...</p>
                     </div>
-                ) : !hasAnyPuzzles ? (
-                    /* Global Empty State */
+                ) : (!hasAnyPuzzles && viewMode === 'openings') ? (
+                    /* Global Empty State for dynamically grouped openings */
                     <div className="bg-chess-panel border border-white/5 rounded-2xl flex flex-col items-center justify-center p-12 text-center max-w-2xl mx-auto shadow-2xl backdrop-blur-md relative overflow-hidden group">
                         <div className="absolute inset-0 bg-gradient-to-br from-chess-accent/5 to-transparent pointer-events-none" />
                         <div className="w-16 h-16 bg-chess-accent/15 text-chess-accent rounded-full flex items-center justify-center mb-6">
@@ -634,8 +646,28 @@ export default function Repertoire() {
                         </button>
                     </div>
                 ) : (
-                    /* List View */
+                    /* List View (Shows playlists even when empty, so they can be managed/created) */
                     <div className="space-y-6">
+                        {!hasAnyPuzzles && viewMode === 'playlists' && (
+                            <div className="bg-chess-panel border border-white/5 rounded-2xl p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl backdrop-blur-md relative overflow-hidden">
+                                <div className="absolute inset-0 bg-gradient-to-r from-chess-accent/5 to-transparent pointer-events-none" />
+                                <div className="flex items-center gap-4 text-left">
+                                    <div className="w-12 h-12 bg-chess-accent/15 border border-chess-accent/20 text-chess-accent rounded-xl flex items-center justify-center shrink-0">
+                                        <BookOpen size={24} />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-white font-bold text-base">Your Repertoire is Empty</h3>
+                                        <p className="text-xs text-chess-text-secondary mt-0.5">You don't have any puzzles loaded yet. Link your Lichess account and scan games to build your training decks!</p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={() => navigate('/dashboard/analysis-board', { state: { activeTab: 'ingest' } })}
+                                    className="px-5 py-2.5 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold text-sm shadow-lg shadow-chess-accent/10 transition-all shrink-0 hover:-translate-y-0.5 cursor-pointer"
+                                >
+                                    Analyse Games
+                                </button>
+                            </div>
+                        )}
                         {filteredGroups.map((playlist) => {
                             if (playlist.puzzles.length === 0 && viewMode === 'openings') return null; // hide empty dynamic opening groups
                             if (playlist.puzzles.length === 0 && viewMode === 'playlists' && !groups.some(g => g.playlistIndex === playlist.playlistIndex && g.total > 0)) {
@@ -730,7 +762,7 @@ export default function Repertoire() {
                                                     </div>
                                                 )}
 
-                                                <div className="flex items-center gap-4 text-xs text-chess-text-secondary">
+                                                <div className="flex items-center gap-4 text-xs text-chess-text-secondary mt-1 flex-wrap">
                                                     <span className="flex items-center gap-1">
                                                         <Folder size={14} /> {playlist.puzzles.length} puzzles
                                                     </span>
@@ -742,7 +774,19 @@ export default function Repertoire() {
                                         </div>
 
                                         {/* Gauges and Collapsible Indicators */}
-                                        <div className="flex items-center gap-6 w-full sm:w-auto justify-between sm:justify-end border-t border-white/5 pt-4 sm:pt-0 sm:border-0">
+                                        <div className="flex items-center gap-6 w-full sm:w-auto justify-between sm:justify-end border-t border-white/5 pt-4 sm:pt-0 sm:border-0 shrink-0">
+                                            {playlist.puzzles.length > 0 && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleTrainPlaylist(playlist.puzzles);
+                                                    }}
+                                                    className="px-4 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-extrabold text-xs shadow-lg shadow-chess-accent/15 transition-all flex items-center gap-1.5 hover:-translate-y-0.5 active:scale-95 cursor-pointer shrink-0"
+                                                    title="Start training this playlist"
+                                                >
+                                                    <Play size={14} fill="currentColor" /> Train Playlist
+                                                </button>
+                                            )}
                                             <div className="flex items-center gap-6">
                                                 <CircularGauge
                                                     percentage={playlist.progress}
@@ -761,7 +805,13 @@ export default function Repertoire() {
                                     {isExpanded && (
                                         <div className="border-t border-white/5 bg-black/10 transition-all duration-300">
                                             <div className="p-4 space-y-3">
-                                                {playlist.filteredPuzzles.length === 0 ? (
+                                                {playlist.puzzles.length === 0 ? (
+                                                    <div className="p-8 text-center text-chess-text-secondary bg-chess-panel/10 rounded-xl flex flex-col items-center justify-center gap-2">
+                                                        <FolderOpen size={32} className="opacity-30 mb-1" />
+                                                        <p className="font-bold text-sm text-white/85">This Playlist is Empty</p>
+                                                        <p className="text-xs max-w-sm">No blunder positions have been saved here yet. Scan matches or move existing puzzles here to populate it!</p>
+                                                    </div>
+                                                ) : playlist.filteredPuzzles.length === 0 ? (
                                                     <div className="p-6 text-center text-chess-text-secondary bg-chess-panel/10 rounded-xl">
                                                         No puzzles match the search/filters inside this section.
                                                     </div>
@@ -948,8 +998,12 @@ export default function Repertoire() {
 
                 {/* Create Playlist Modal */}
                 {showCreateModal && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                        <div className="bg-chess-panel border border-chess-accent/30 max-w-md w-full rounded-2xl shadow-2xl p-8 relative overflow-hidden">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        {/* Backdrop */}
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onClick={() => setShowCreateModal(false)} />
+
+                        {/* Modal Card */}
+                        <div className="bg-chess-panel border border-chess-accent/30 max-w-md w-full rounded-2xl shadow-2xl p-8 relative overflow-hidden z-10">
                             <div className="absolute inset-0 bg-gradient-to-br from-chess-accent/5 to-transparent pointer-events-none" />
 
                             <div className="flex items-center gap-3 text-chess-accent mb-6">
@@ -1003,8 +1057,12 @@ export default function Repertoire() {
 
                 {/* Playlist Deletion Overlay Warning Modal */}
                 {playlistToDelete && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                        <div className="bg-chess-panel border border-red-500/30 max-w-md w-full rounded-2xl shadow-2xl p-6 relative overflow-hidden">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        {/* Backdrop */}
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onClick={() => setPlaylistToDelete(null)} />
+
+                        {/* Modal Card */}
+                        <div className="bg-chess-panel border border-red-500/30 max-w-md w-full rounded-2xl shadow-2xl p-6 relative overflow-hidden z-10">
                             {/* Accent background glow */}
                             <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 to-transparent pointer-events-none" />
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getPendingPuzzles, saveApprovedPuzzles, clearPendingPuzzles, getUserPlaylists } from '../services/puzzleService';
-import { Loader2, ArrowRight, Save, X, Sparkles } from 'lucide-react';
+import { getPendingPuzzles, saveApprovedPuzzles, clearPendingPuzzles, getUserPlaylists, createPlaylist, ignorePendingPuzzle } from '../services/puzzleService';
+import { Loader2, ArrowRight, Save, X, Sparkles, ArrowLeft, EyeOff, Clock } from 'lucide-react';
 import { getUserProfile } from '../services/userService';
 import { getPieceImageUrl } from '../lib/pieceSets';
 
@@ -67,6 +67,10 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
 
     // Track edited details for all puzzles in batch
     const [editedPuzzles, setEditedPuzzles] = useState([]);
+    
+    // Create new playlist states
+    const [totalPlaylistsCount, setTotalPlaylistsCount] = useState(0);
+    const [newPlaylistName, setNewPlaylistName] = useState('');
 
     useEffect(() => {
         if (userId) {
@@ -82,6 +86,7 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
             
             // Initialize edited puzzles list
             const allPlaylists = await getUserPlaylists(userId);
+            setTotalPlaylistsCount(allPlaylists.length);
             let available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
                 index: pl.playlistIndex,
                 title: pl.title,
@@ -105,7 +110,7 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
 
             const initialEdited = list.map(p => ({
                 ...p,
-                customName: `${p.opening || 'Opening'} blunder`,
+                customName: `${p.opening || p.openingName || 'Opening'} blunder`,
                 playlistIndex: defaultPlIdx,
                 isFavorite: defaultIsFav
             }));
@@ -129,9 +134,101 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
         }
     };
 
-    const handleNext = () => {
+    const handlePrev = () => {
+        if (currentIndex > 0) {
+            // Save current edits
+            const updated = [...editedPuzzles];
+            const isFav = playlistIndex === 'fav';
+            const targetPlIdx = isFav ? 0 : parseInt(playlistIndex, 10);
+            updated[currentIndex] = {
+                ...updated[currentIndex],
+                customName: customName.trim(),
+                playlistIndex: targetPlIdx,
+                isFavorite: isFav
+            };
+            setEditedPuzzles(updated);
+
+            const prevIdx = currentIndex - 1;
+            setCurrentIndex(prevIdx);
+            setCustomName(updated[prevIdx].customName);
+            const prevVal = updated[prevIdx].isFavorite ? 'fav' : updated[prevIdx].playlistIndex.toString();
+            setPlaylistIndex(prevVal);
+        }
+    };
+
+    const handleIgnoreCurrent = async () => {
+        const puzzleToIgnore = puzzles[currentIndex];
+        if (!puzzleToIgnore) return;
+        
+        const gameId = puzzleToIgnore.gameId;
+        setSaving(true);
+        try {
+            // Remove the puzzle from Firestore and clean up processed game entry
+            const updatedPuzzles = await ignorePendingPuzzle(userId, gameId, puzzles, currentIndex);
+            
+            // Remove from edited puzzles list
+            const newEdited = editedPuzzles.filter((_, idx) => idx !== currentIndex);
+            
+            if (updatedPuzzles.length === 0) {
+                setPuzzles([]);
+                setEditedPuzzles([]);
+                if (onSaveSuccess) onSaveSuccess(0);
+                onClose();
+            } else {
+                setPuzzles(updatedPuzzles);
+                setEditedPuzzles(newEdited);
+                
+                // Adjust index
+                const nextIndex = currentIndex >= updatedPuzzles.length ? updatedPuzzles.length - 1 : currentIndex;
+                setCurrentIndex(nextIndex);
+                setCustomName(newEdited[nextIndex].customName);
+                const nextVal = newEdited[nextIndex].isFavorite ? 'fav' : newEdited[nextIndex].playlistIndex.toString();
+                setPlaylistIndex(nextVal);
+            }
+        } catch (err) {
+            console.error('Failed to ignore puzzle:', err);
+            alert('Failed to ignore puzzle. Please try again.');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleNext = async () => {
+        let finalPlIdx = playlistIndex;
         const isFav = playlistIndex === 'fav';
-        const targetPlIdx = isFav ? 0 : parseInt(playlistIndex, 10);
+
+        if (playlistIndex === 'create_new') {
+            if (!newPlaylistName.trim()) {
+                alert('Please enter a name for the new playlist.');
+                return;
+            }
+            setSaving(true);
+            try {
+                const newIdx = await createPlaylist(userId, newPlaylistName);
+                finalPlIdx = newIdx.toString();
+                setNewPlaylistName('');
+                
+                // Refresh playlists list
+                const allPlaylists = await getUserPlaylists(userId);
+                setTotalPlaylistsCount(allPlaylists.length);
+                let available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
+                    index: pl.playlistIndex,
+                    title: pl.title,
+                    total: pl.total
+                }));
+                setPlaylists(available);
+                setPlaylistIndex(finalPlIdx);
+            } catch (err) {
+                console.error('Failed to create playlist:', err);
+                alert('Failed to create playlist. Please try again.');
+                setSaving(false);
+                return;
+            } finally {
+                setSaving(false);
+            }
+        }
+
+        const targetPlIdx = isFav ? 0 : parseInt(finalPlIdx, 10);
 
         // Save current edits
         const updated = [...editedPuzzles];
@@ -189,8 +286,12 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
     const currentPuzzle = puzzles[currentIndex];
 
     return (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-in fade-in duration-200">
-            <div className="relative w-full max-w-3xl bg-chess-panel/95 border border-white/10 rounded-3xl p-8 sm:p-10 shadow-2xl flex flex-col gap-6">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-md cursor-pointer animate-in fade-in duration-200" onClick={onClose} />
+            
+            {/* Modal Card */}
+            <div className="relative w-full max-w-3xl bg-chess-panel/95 border border-white/10 rounded-3xl p-8 sm:p-10 shadow-2xl flex flex-col gap-6 z-10">
                 
                 {/* Header */}
                 <div className="flex justify-between items-start">
@@ -239,11 +340,11 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                     </div>
 
                     {/* Inputs */}
-                    <div className="flex-1 w-full flex flex-col justify-between py-1 space-y-5">
+                    <div className="flex-1 w-full flex flex-col justify-start py-1 space-y-4">
                         <div className="space-y-1">
                             <p className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider">FEN Source Location</p>
-                            <p className="text-base font-bold text-white truncate max-w-[320px]" title={currentPuzzle.opening}>
-                                {currentPuzzle.opening || 'Unknown Opening'}
+                            <p className="text-base font-bold text-white truncate max-w-[320px]" title={currentPuzzle.opening || currentPuzzle.openingName}>
+                                {currentPuzzle.opening || currentPuzzle.openingName || 'Unknown Opening'}
                             </p>
                             {currentPuzzle.rating && (
                                 <p className="text-xs text-chess-text-secondary mt-0.5">Opponent Rating: {currentPuzzle.rating}</p>
@@ -274,26 +375,62 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                                         {pl.title} ({pl.total}/20)
                                     </option>
                                 ))}
+                                {totalPlaylistsCount < 3 && (
+                                    <option value="create_new">➕ Create New Playlist...</option>
+                                )}
                                 <option value="fav">⭐ Starred / Favorites (Max 10)</option>
                             </select>
+
+                            {playlistIndex === 'create_new' && (
+                                <div className="space-y-1.5 mt-2 animate-in slide-in-from-top-1 duration-200">
+                                    <label className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">New Playlist Name</label>
+                                    <input
+                                        type="text"
+                                        placeholder="Enter playlist name..."
+                                        value={newPlaylistName}
+                                        onChange={(e) => setNewPlaylistName(e.target.value)}
+                                        className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white focus:outline-none transition-colors"
+                                    />
+                                </div>
+                            )}
                         </div>
                     </div>
 
                 </div>
 
                 {/* Footer buttons */}
-                <div className="flex gap-3 pt-2 border-t border-white/5">
+                <div className="flex gap-2.5 pt-4 border-t border-white/5 w-full justify-between">
                     <button
                         onClick={onClose}
                         disabled={saving}
-                        className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold transition-all text-xs"
+                        className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-chess-text-secondary hover:text-white rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                        Save Later (Close)
+                        <Clock size={14} />
+                        Save Later
                     </button>
+
+                    <button
+                        onClick={handlePrev}
+                        disabled={currentIndex === 0 || saving}
+                        className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 border border-white/10 text-white rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                        <ArrowLeft size={14} />
+                        Previous
+                    </button>
+                    
+                    <button
+                        onClick={handleIgnoreCurrent}
+                        disabled={saving}
+                        className="flex-1 py-2.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 text-red-400 rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                        <EyeOff size={14} />
+                        Ignore
+                    </button>
+
                     <button
                         onClick={handleNext}
                         disabled={saving}
-                        className="flex-1 py-3 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-2"
+                        className="flex-1 py-2.5 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                         {saving ? (
                             <>
@@ -305,11 +442,11 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                                 {currentIndex === puzzles.length - 1 ? (
                                     <>
                                         <Save size={14} />
-                                        Approve & Save All
+                                        Finish & Save
                                     </>
                                 ) : (
                                     <>
-                                        Next Puzzle
+                                        Next
                                         <ArrowRight size={14} />
                                     </>
                                 )}

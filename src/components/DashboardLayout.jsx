@@ -111,6 +111,8 @@ export default function DashboardLayout({ children }) {
         const params = new URLSearchParams(location.search);
         if (params.get('review') === 'true') {
             setTimeout(() => setShowWizard(true), 0);
+        } else {
+            setTimeout(() => setShowWizard(false), 0);
         }
     }, [location.search]);
 
@@ -168,6 +170,23 @@ export default function DashboardLayout({ children }) {
     };
 
     const selectedColor = { primary: '#38BDF8', hover: '#0EA5E9' };
+
+    const getHeaderTitle = () => {
+        switch (location.pathname) {
+            case '/dashboard':
+                return 'Dashboard';
+            case '/dashboard/analysis-board':
+                return 'Analysis Manager';
+            case '/dashboard/repertoire':
+                return 'My Repertoire';
+            case '/dashboard/train':
+                return 'Training Area';
+            case '/dashboard/settings':
+                return 'Settings';
+            default:
+                return 'Dashboard';
+        }
+    };
 
     return (
         <div className="h-screen bg-chess-bg text-chess-text-primary font-sans flex overflow-hidden">
@@ -295,7 +314,7 @@ export default function DashboardLayout({ children }) {
                         <button className="p-2 hover:bg-white/5 rounded-lg lg:hidden text-white">
                             <Menu size={24} />
                         </button>
-                        <h2 className="text-xl font-bold text-white hidden sm:block">Dashboard</h2>
+                        <h2 className="text-xl font-bold text-white hidden sm:block">{getHeaderTitle()}</h2>
                     </div>
 
                     <div className="flex items-center gap-6">
@@ -446,7 +465,13 @@ export default function DashboardLayout({ children }) {
                 {showWizard && (
                     <IngestionWizard
                         userId={user.uid}
-                        onClose={() => setShowWizard(false)}
+                        onClose={() => {
+                            if (location.search.includes('review')) {
+                                navigate(location.pathname, { replace: true });
+                            } else {
+                                setShowWizard(false);
+                            }
+                        }}
                         onSaveSuccess={() => {
                             if (location.search.includes('review')) {
                                 navigate(location.pathname, { replace: true });
