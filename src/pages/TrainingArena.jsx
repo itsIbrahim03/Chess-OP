@@ -2,14 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
-import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye } from 'lucide-react';
+import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye, Loader2, Play } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
     getNextPuzzle,
     getPuzzleById,
     updatePuzzleReview,
     toggleFavorite,
-    getUserPlaylists
+    getUserPlaylists,
+    getFavoritePuzzles
 } from '../services/puzzleService';
 import { incrementTotalSolved, getUserProfile } from '../services/userService';
 import { useNavigate } from 'react-router-dom';
@@ -51,6 +52,13 @@ export default function TrainingArena() {
     const [currentSessionIndex, setCurrentSessionIndex] = useState(0);
     const [sessionResults, setSessionResults] = useState([]);
     const [sessionFinished, setSessionFinished] = useState(false);
+
+    // Playlist Selector state variables
+    const [showSelector, setShowSelector] = useState(false);
+    const [playlistsData, setPlaylistsData] = useState([]);
+    const [favoritesList, setFavoritesList] = useState([]);
+    const [favoritesCount, setFavoritesCount] = useState(0);
+    const [selectorLoading, setSelectorLoading] = useState(true);
 
     // Sync state to ref (avoids stale closures in Chessground callbacks)
     useEffect(() => {
@@ -96,9 +104,52 @@ export default function TrainingArena() {
         } else if (specificId) {
             loadSpecificPuzzle(specificId);
         } else {
-            loadNextPuzzle();
+            // Show selection popup instead of loading a random puzzle automatically
+            setShowSelector(true);
+            setLoading(false);
+            setSelectorLoading(true);
+            Promise.all([
+                getUserPlaylists(user.uid),
+                getFavoritePuzzles(user.uid)
+            ]).then(([pls, favs]) => {
+                setPlaylistsData(pls);
+                setFavoritesList(favs);
+                setFavoritesCount(favs.length);
+                setSelectorLoading(false);
+            }).catch(e => {
+                console.error('Failed to load selector data:', e);
+                setSelectorLoading(false);
+            });
         }
     }, [user]);
+
+    const handleSelectPlaylist = (type, puzzles) => {
+        if (!puzzles || puzzles.length === 0) return;
+        
+        // Shuffle puzzle IDs
+        const shuffledIds = [...puzzles].sort(() => 0.5 - Math.random()).map(p => p.id);
+        
+        // Save to sessionStorage
+        sessionStorage.setItem('oneTimePlaylist', JSON.stringify(shuffledIds));
+        sessionStorage.removeItem('oneTimeSessionResults'); // Clear old session results
+        
+        // Set state for session
+        setIsOneTime(true);
+        setSessionQueue(shuffledIds);
+        setCurrentSessionIndex(0);
+        setSessionResults([]);
+        setSessionFinished(false);
+        setShowSelector(false);
+        
+        // Load the first puzzle
+        loadSpecificPuzzle(shuffledIds[0]);
+    };
+
+    const handleSelectAllRepertoire = () => {
+        const allPuzzles = (playlistsData || []).flatMap(p => p?.puzzles || []);
+        if (allPuzzles.length === 0) return;
+        handleSelectPlaylist('all', allPuzzles);
+    };
 
     // ─── Load a specific puzzle by Firestore document ID ────────────────────
     async function loadSpecificPuzzle(puzzleId) {
@@ -669,6 +720,115 @@ export default function TrainingArena() {
 
                 </div>
             </div>
+
+            {/* Selection Popup */}
+            {showSelector && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/70 backdrop-blur-md cursor-pointer" onClick={() => navigate('/dashboard')} />
+
+                    {/* Card Container */}
+                    <div className="relative w-full max-w-2xl bg-chess-panel/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+                        {/* Glow effect */}
+                        <div className="absolute -inset-px bg-gradient-to-r from-chess-accent/20 to-brand-med/20 rounded-3xl blur-[1px] -z-10" />
+
+                        <div className="flex flex-col items-center text-center mb-8">
+                            <div className="w-16 h-16 bg-chess-accent/15 border border-chess-accent/20 rounded-2xl flex items-center justify-center mb-4">
+                                <Target size={32} className="text-chess-accent" />
+                            </div>
+                            <h2 className="text-3xl font-serif font-bold text-white mb-2">Select Training Deck</h2>
+                            <p className="text-chess-text-secondary text-sm max-w-md">
+                                Choose which playlist you want to train. Solve positions correctly to build your login and session streaks.
+                            </p>
+                        </div>
+
+                        {selectorLoading ? (
+                            <div className="flex flex-col items-center justify-center py-12 gap-3">
+                                <Loader2 className="animate-spin text-chess-accent" size={32} />
+                                <p className="text-chess-text-secondary text-sm">Loading playlists...</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-6">
+                                {/* Playlists Grid */}
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {playlistsData.map((pl) => {
+                                        const isEmpty = pl.total === 0;
+                                        return (
+                                            <button
+                                                key={pl.playlistIndex}
+                                                onClick={() => handleSelectPlaylist(pl.playlistIndex.toString(), pl.puzzles)}
+                                                disabled={isEmpty}
+                                                className={`relative flex items-center justify-between p-5 rounded-2xl border transition-all text-left group ${
+                                                    isEmpty 
+                                                        ? 'border-white/5 bg-white/[0.01] opacity-40 cursor-not-allowed' 
+                                                        : 'border-white/10 bg-white/[0.02] hover:border-chess-accent/40 hover:bg-chess-accent/5 hover:scale-[1.02] active:scale-[0.98] cursor-pointer'
+                                                }`}
+                                            >
+                                                <div className="min-w-0 flex-1 mr-4">
+                                                    <h4 className={`font-bold truncate ${isEmpty ? 'text-white/60' : 'text-white group-hover:text-chess-accent transition-colors'}`}>
+                                                        {pl.title}
+                                                    </h4>
+                                                    <p className="text-xs text-chess-text-secondary mt-1">
+                                                        {pl.total} puzzles · {pl.progress}% mastery
+                                                    </p>
+                                                </div>
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                                                    isEmpty ? 'border-white/5 bg-white/5 text-white/40' : 'border-white/10 bg-white/5 text-chess-text-secondary group-hover:bg-chess-accent group-hover:text-white group-hover:border-transparent transition-all'
+                                                }`}>
+                                                    <Play size={14} fill={isEmpty ? "none" : "currentColor"} />
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+
+                                    {/* Favorites Card */}
+                                    <button
+                                        onClick={() => handleSelectPlaylist('favorites', favoritesList)}
+                                        disabled={favoritesCount === 0}
+                                        className={`relative flex items-center justify-between p-5 rounded-2xl border transition-all text-left group ${
+                                            favoritesCount === 0 
+                                                ? 'border-white/5 bg-white/[0.01] opacity-40 cursor-not-allowed' 
+                                                : 'border-white/10 bg-white/[0.02] hover:border-yellow-450/45 hover:bg-yellow-400/5 hover:scale-[1.02] active:scale-[0.98] cursor-pointer'
+                                        }`}
+                                    >
+                                        <div className="min-w-0 flex-1 mr-4">
+                                            <h4 className={`font-bold truncate ${favoritesCount === 0 ? 'text-white/60' : 'text-white group-hover:text-yellow-400 transition-colors'}`}>
+                                                Starred / Favorites
+                                            </h4>
+                                            <p className="text-xs text-chess-text-secondary mt-1">
+                                                {favoritesCount} favorited puzzles
+                                            </p>
+                                        </div>
+                                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border ${
+                                            favoritesCount === 0 ? 'border-white/5 bg-white/5 text-white/40' : 'border-white/10 bg-white/5 text-yellow-400 group-hover:bg-yellow-400 group-hover:text-black group-hover:border-transparent transition-all'
+                                        }`}>
+                                            <Star size={14} fill={favoritesCount === 0 ? "none" : "currentColor"} />
+                                        </div>
+                                    </button>
+                                </div>
+
+                                {/* Footer Actions */}
+                                <div className="flex flex-col sm:flex-row gap-3 pt-4 border-t border-white/5">
+                                    <button
+                                        onClick={handleSelectAllRepertoire}
+                                        disabled={(playlistsData || []).flatMap(p => p?.puzzles || []).length === 0}
+                                        className="flex-1 py-3 bg-chess-accent hover:bg-chess-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 hover:-translate-y-0.5 cursor-pointer"
+                                    >
+                                        <ClipboardList size={16} />
+                                        Train All Repertoire
+                                    </button>
+                                    <button
+                                        onClick={() => navigate('/dashboard')}
+                                        className="py-3 px-6 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold transition-all text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                    >
+                                        Back to Dashboard
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </DashboardLayout>
     );
 }

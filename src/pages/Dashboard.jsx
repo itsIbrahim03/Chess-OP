@@ -2,12 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import DashboardLayout from '../components/DashboardLayout';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import {
   Play, Star, Plus, Trophy, Flame, BookOpen,
   History, ArrowRight, CheckCircle, XCircle,
-  Loader2, AlertCircle, ChevronRight, Search
+  Loader2, AlertCircle, ChevronRight, Search, ChevronLeft, X
 } from 'lucide-react';
-import { getUserProfile } from '../services/userService';
+import { updateUserProfile } from '../services/userService';
 import {
   getUserPuzzleStats,
   getUserPlaylists,
@@ -48,6 +50,43 @@ export default function Dashboard() {
   const [newCount, setNewCount] = useState(0);
   const [error, setError] = useState(null);
 
+  const [showTour, setShowTour] = useState(false);
+  const [tourStep, setTourStep] = useState(1);
+
+  // Compute session streak from sessionStorage
+  const sessionResultsStr = sessionStorage.getItem('oneTimeSessionResults');
+  let lastSessionStreak = 0;
+  if (sessionResultsStr) {
+    try {
+      const results = JSON.parse(sessionResultsStr);
+      let currentRun = 0;
+      let maxRun = 0;
+      results.forEach(r => {
+        if (r.result) {
+          currentRun++;
+          if (currentRun > maxRun) maxRun = currentRun;
+        } else {
+          currentRun = 0;
+        }
+      });
+      lastSessionStreak = maxRun;
+    } catch (e) {
+      console.warn('Failed to parse session results:', e);
+    }
+  }
+
+  const handleEndTour = async () => {
+    setShowTour(false);
+    if (user?.uid) {
+      try {
+        await updateUserProfile(user.uid, { showWelcomeTour: false });
+        setUserProfile(prev => prev ? { ...prev, showWelcomeTour: false } : null);
+      } catch (e) {
+        console.error('Failed to dismiss welcome tour:', e);
+      }
+    }
+  };
+
   const firstName = user?.displayName?.split(' ')[0]
     || user?.email?.split('@')[0]
     || 'Player';
@@ -57,24 +96,14 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      // Load profile + stats together — these are the most critical
-      const [profile, stats] = await Promise.all([
-        getUserProfile(user.uid),
-        getUserPuzzleStats(user.uid),
-      ]);
-      // If onboarding is not completed, redirect to onboarding page
-      if (profile && profile.onboardingCompleted !== true) {
-        navigate('/onboarding');
-        return;
-      }
-
-      setUserProfile(profile);
+      // Load stats — this is critical
+      const stats = await getUserPuzzleStats(user.uid);
       setPuzzleStats(stats);
     } catch (e) {
-      console.error('Critical dashboard load error (profile/stats):', e);
-      setError('Failed to load your profile. Please refresh.');
+      console.error('Critical dashboard load error (stats):', e);
+      setError('Failed to load puzzle statistics. Please refresh.');
       setLoading(false);
-      return; // Stop here if profile fails
+      return; // Stop here if stats fails
     }
 
     // Load remaining data independently — errors are non-fatal
@@ -93,16 +122,41 @@ export default function Dashboard() {
     if (count.status === 'fulfilled') setNewCount(count.value);
 
     setLoading(false);
-  }, [user, navigate]);
+  }, [user]);
 
+  // Set up real-time listener for the user profile document
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const userRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(userRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setUserProfile(data);
+        // If onboarding is not completed, redirect to onboarding page
+        if (data.onboardingCompleted !== true) {
+          navigate('/onboarding');
+        }
+        if (data.showWelcomeTour === true) {
+          setShowTour(true);
+          setTourStep(1);
+        }
+      }
+    }, (error) => {
+      console.error("Error listening to profile changes in Dashboard:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user?.uid, navigate]);
+
+  // When pendingScan changes (e.g. scan completes or puzzles are reviewed/dismissed), reload stats and lists
+  const pendingScanStatus = userProfile?.pendingScan?.status;
+  const pendingScanCount = userProfile?.pendingScan?.count;
   useEffect(() => {
     if (user?.uid) {
-      const timer = setTimeout(() => {
-        loadAll();
-      }, 0);
-      return () => clearTimeout(timer);
+      loadAll();
     }
-  }, [user, loadAll]);
+  }, [user?.uid, pendingScanStatus, pendingScanCount, loadAll]);
 
   return (
     <DashboardLayout>
@@ -182,7 +236,7 @@ export default function Dashboard() {
       )}
 
       {/* ── Stats Row ────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
 
         {/* Total Solved */}
         <div className="bg-chess-panel border border-white/5 p-5 rounded-2xl relative overflow-hidden group">
@@ -203,12 +257,26 @@ export default function Dashboard() {
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Flame size={64} />
           </div>
-          <h3 className="text-chess-text-secondary text-sm font-medium mb-1">Current Streak</h3>
+          <h3 className="text-chess-text-secondary text-sm font-medium mb-1">Daily Login Streak</h3>
           <div className="text-3xl font-bold text-white mb-2">
             {loading ? <Loader2 size={28} className="animate-spin text-chess-accent" /> : `${userProfile?.stats?.streak ?? 0} Days`}
           </div>
           <div className="text-sm text-chess-text-secondary">
             {loading ? '—' : 'Consecutive days on Chess-OP'}
+          </div>
+        </div>
+
+        {/* Session Streak */}
+        <div className="bg-chess-panel border border-white/5 p-5 rounded-2xl relative overflow-hidden group">
+          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+            <Flame size={64} className="text-chess-accent" />
+          </div>
+          <h3 className="text-chess-text-secondary text-sm font-medium mb-1">Playlist Session Streak</h3>
+          <div className="text-3xl font-bold text-white mb-2">
+            {loading ? <Loader2 size={28} className="animate-spin text-chess-accent" /> : `${lastSessionStreak} Solves`}
+          </div>
+          <div className="text-sm text-chess-text-secondary">
+            {loading ? '—' : 'Longest streak in last active run'}
           </div>
         </div>
 
@@ -221,15 +289,15 @@ export default function Dashboard() {
           <div className="flex flex-col sm:flex-row gap-3">
             <button 
               onClick={(e) => { e.stopPropagation(); navigate('/dashboard/analysis-board', { state: { activeTab: 'ingest' } }); }}
-              className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 transition-colors"
+              className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
             >
-              <Search size={16} /> Analyse Games
+              <Search size={14} /> Analyse
             </button>
             <button 
               onClick={(e) => { e.stopPropagation(); navigate('/dashboard/train'); }}
-              className="flex-1 bg-white text-chess-accent px-4 py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2 hover:bg-white/90 transition-colors"
+              className="flex-1 bg-white text-chess-accent px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-white/90 transition-colors"
             >
-              <Play size={16} fill="currentColor" /> Continue Session
+              <Play size={14} fill="currentColor" /> Train
             </button>
           </div>
         </div>
@@ -375,7 +443,6 @@ export default function Dashboard() {
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <History size={20} className="text-chess-text-secondary" /> Recent History
               </h2>
-              <button className="text-sm text-chess-text-secondary hover:text-white transition-colors">View All</button>
             </div>
 
             {loading ? (
@@ -491,6 +558,124 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* Welcome Setup Guide Tour Modal */}
+      {showTour && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={handleEndTour} />
+          
+          <div className="relative w-full max-w-xl bg-chess-panel/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            {/* Glow */}
+            <div className="absolute -inset-px bg-gradient-to-r from-chess-accent/20 to-brand-med/20 rounded-3xl blur-[1px] -z-10" />
+            
+            {/* Header */}
+            <div className="flex justify-between items-center mb-6">
+              <span className="text-[10px] bg-chess-accent/15 border border-chess-accent/25 text-chess-accent px-2.5 py-1 rounded-lg font-extrabold uppercase tracking-widest">
+                Setup Guide (Step {tourStep} of 5)
+              </span>
+              <button 
+                onClick={handleEndTour}
+                className="text-chess-text-secondary hover:text-white p-1 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+                title="Skip Tour"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Step Content */}
+            <div className="flex flex-col items-center text-center space-y-4 mb-8">
+              <div className="w-16 h-16 bg-chess-accent/15 border border-chess-accent/20 text-chess-accent rounded-2xl flex items-center justify-center shadow-xl shadow-chess-accent/5">
+                {tourStep === 1 && <Trophy size={32} />}
+                {tourStep === 2 && <AlertCircle size={32} />}
+                {tourStep === 3 && <Search size={32} />}
+                {tourStep === 4 && <BookOpen size={32} />}
+                {tourStep === 5 && <Play size={32} />}
+              </div>
+
+              {tourStep === 1 && (
+                <>
+                  <h3 className="text-2xl font-serif font-bold text-white">Welcome to Chess-OP! 🏆</h3>
+                  <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md">
+                    Chess-OP is a state-of-the-art opening training platform. We help you scan your games, find blunder positions, and build custom training decks to eliminate your mistakes.
+                  </p>
+                </>
+              )}
+
+              {tourStep === 2 && (
+                <>
+                  <h3 className="text-2xl font-serif font-bold text-white">1. Link Lichess Account 🌐</h3>
+                  <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md">
+                    Connect your Lichess username in the Settings panel so Chess-OP can pull your matches. (If you don't have one, you can import custom positions manually!)
+                  </p>
+                </>
+              )}
+
+              {tourStep === 3 && (
+                <>
+                  <h3 className="text-2xl font-serif font-bold text-white">2. Analysis Manager 🧠</h3>
+                  <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md">
+                    Go to the 'Analysis Manager' to run Stockfish scans. You can select Rapid/Blitz time controls, date range, or paste manual FEN/PGNs to generate puzzles.
+                  </p>
+                </>
+              )}
+
+              {tourStep === 4 && (
+                <>
+                  <h3 className="text-2xl font-serif font-bold text-white">3. Repertoire & Playlists 📚</h3>
+                  <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md">
+                    Puzzles are stored in sequential playlists under 'My Repertoire'. You can rename puzzles, shift them between folders, and monitor your opening mastery scores.
+                  </p>
+                </>
+              )}
+
+              {tourStep === 5 && (
+                <>
+                  <h3 className="text-2xl font-serif font-bold text-white">4. Training Arena 🎯</h3>
+                  <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md">
+                    Launch sessions on the interactive chessboard. A selector will ask which playlist you want to train. Solve positions correctly to build login and session streaks!
+                  </p>
+                </>
+              )}
+            </div>
+
+            {/* Stepper Footer Controls */}
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => setTourStep(prev => Math.max(1, prev - 1))}
+                disabled={tourStep === 1}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-35 disabled:hover:bg-white/5 text-white border border-white/10 rounded-xl font-bold text-xs transition-all flex items-center gap-1 cursor-pointer disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={14} /> Back
+              </button>
+
+              <div className="flex gap-1.5">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div 
+                    key={i} 
+                    className={`w-2 h-2 rounded-full transition-all duration-300 ${tourStep === i ? 'bg-chess-accent w-4' : 'bg-white/10'}`}
+                  />
+                ))}
+              </div>
+
+              {tourStep < 5 ? (
+                <button
+                  onClick={() => setTourStep(prev => prev + 1)}
+                  className="px-5 py-2.5 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold text-xs transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  Next <ChevronRight size={14} />
+                </button>
+              ) : (
+                <button
+                  onClick={handleEndTour}
+                  className="px-5 py-2.5 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold text-xs transition-all flex items-center gap-1 cursor-pointer shadow-md shadow-chess-accent/15"
+                >
+                  Finish Tour <CheckCircle size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }
