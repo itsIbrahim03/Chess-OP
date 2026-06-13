@@ -16,9 +16,11 @@ import {
     toggleFavorite,
     clearPlaylist,
     deletePuzzle,
-    createPlaylist
+    createPlaylist,
+    getFavoritePuzzles
 } from '../services/puzzleService';
 import { useNavigate } from 'react-router-dom';
+import ThemedDialog from '../components/ThemedDialog';
 
 const getOpeningIcon = (title) => {
     let hash = 0;
@@ -101,24 +103,75 @@ export default function Repertoire() {
     // Toast alert object: { message, type: 'success' | 'error' }
     const [toast, setToast] = useState(null);
 
+    // Themed Confirm Dialog State
+    const [confirmConfig, setConfirmConfig] = useState({
+        show: false,
+        title: '',
+        message: '',
+        type: 'confirm',
+        onConfirm: null,
+        onCancel: null
+    });
+
+    const showConfirm = (message, onConfirm, onCancel = null, title = 'Confirm Action', type = 'confirm') => {
+        setConfirmConfig({
+            show: true,
+            title,
+            message,
+            type,
+            onConfirm: () => {
+                onConfirm();
+                setConfirmConfig(prev => ({ ...prev, show: false }));
+            },
+            onCancel: () => {
+                if (onCancel) onCancel();
+                setConfirmConfig(prev => ({ ...prev, show: false }));
+            }
+        });
+    };
+
+    const [favPuzzles, setFavPuzzles] = useState([]);
+    const [unfavoriteToDelete, setUnfavoriteToDelete] = useState(null);
+
     const loadRepertoire = useCallback(async () => {
         if (!user?.uid) return;
         try {
-            const liveGroups = viewMode === 'playlists'
-                ? await getUserPlaylists(user.uid)
-                : await getPuzzlesGroupedByOpening(user.uid);
-            setGroups(liveGroups);
+            if (viewMode === 'playlists') {
+                const [livePlaylists, liveFavorites] = await Promise.all([
+                    getUserPlaylists(user.uid),
+                    getFavoritePuzzles(user.uid)
+                ]);
+                setGroups(livePlaylists);
+                setFavPuzzles(liveFavorites);
 
-            // Keep expanded states preserved
-            setExpandedGroups(prev => {
-                const updated = { ...prev };
-                liveGroups.forEach(g => {
-                    if (updated[g.playlistIndex] === undefined) {
-                        updated[g.playlistIndex] = false;
+                // Keep expanded states preserved
+                setExpandedGroups(prev => {
+                    const updated = { ...prev };
+                    livePlaylists.forEach(g => {
+                        if (updated[g.playlistIndex] === undefined) {
+                            updated[g.playlistIndex] = false;
+                        }
+                    });
+                    if (updated['favorites'] === undefined) {
+                        updated['favorites'] = false;
                     }
+                    return updated;
                 });
-                return updated;
-            });
+            } else {
+                const liveGroups = await getPuzzlesGroupedByOpening(user.uid);
+                setGroups(liveGroups);
+
+                // Keep expanded states preserved
+                setExpandedGroups(prev => {
+                    const updated = { ...prev };
+                    liveGroups.forEach(g => {
+                        if (updated[g.playlistIndex] === undefined) {
+                            updated[g.playlistIndex] = false;
+                        }
+                    });
+                    return updated;
+                });
+            }
 
         } catch (error) {
             console.error('Failed to load repertoire:', error);
@@ -141,10 +194,29 @@ export default function Repertoire() {
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const filterParam = params.get('filter');
-        if (filterParam && ['all', 'favorites', 'new', 'active', 'white', 'black'].includes(filterParam)) {
+        if (filterParam && ['all', 'new', 'active', 'white', 'black'].includes(filterParam)) {
             setStatusFilter(filterParam);
         }
     }, []);
+
+    // Listen to expand=favorites query parameter to auto-unfold
+    useEffect(() => {
+        if (loading) return;
+        const params = new URLSearchParams(window.location.search);
+        const expandParam = params.get('expand');
+        if (expandParam === 'favorites') {
+            setExpandedGroups(prev => ({
+                ...prev,
+                favorites: true
+            }));
+            setTimeout(() => {
+                const element = document.getElementById('favorites-card');
+                if (element) {
+                    element.scrollIntoView({ behavior: 'smooth' });
+                }
+            }, 300);
+        }
+    }, [loading]);
 
     const toggleGroup = (playlistIdx) => {
         setExpandedGroups(prev => ({
@@ -254,21 +326,26 @@ export default function Repertoire() {
     };
 
     // Star favorite handler
-    const handleToggleFavorite = async (puzzle, playlistIdx) => {
+    const handleToggleFavorite = async (puzzle) => {
         const newFavState = !puzzle.isFavorite;
 
-        // Optimistic local state update - update puzzle in whatever group it resides
-        setGroups(prev => prev.map(group => {
-            return {
-                ...group,
-                puzzles: group.puzzles.map(p => {
-                    if (p.id === puzzle.id) {
-                        return { ...p, isFavorite: newFavState };
-                    }
-                    return p;
-                })
-            };
-        }));
+        if (newFavState) {
+            // Enforce favorites capacity limit
+            if (favPuzzles.length >= 10) {
+                setToast({ message: 'Favorites limit reached! Maximum 10 starred puzzles allowed.', type: 'error' });
+                setTimeout(() => setToast(null), 5000);
+                return;
+            }
+        } else {
+            // Intercept unfavoriting if all playlists are full (20/20 each)
+            const count0 = groups.find(g => g.playlistIndex === 0)?.puzzles.length || 0;
+            const count1 = groups.find(g => g.playlistIndex === 1)?.puzzles.length || 0;
+            const count2 = groups.find(g => g.playlistIndex === 2)?.puzzles.length || 0;
+            if (count0 >= 20 && count1 >= 20 && count2 >= 20) {
+                setUnfavoriteToDelete(puzzle);
+                return;
+            }
+        }
 
         try {
             await toggleFavorite(user.uid, puzzle.id, newFavState);
@@ -277,25 +354,12 @@ export default function Repertoire() {
                 type: 'success'
             });
             setTimeout(() => setToast(null), 3000);
+            await loadRepertoire();
         } catch (e) {
             console.error('Favorite toggle failed:', e);
-            // Rollback local state
-            setGroups(prev => prev.map(group => {
-                if (group.playlistIndex === playlistIdx) {
-                    return {
-                        ...group,
-                        puzzles: group.puzzles.map(p => {
-                            if (p.id === puzzle.id) {
-                                return { ...p, isFavorite: !newFavState };
-                            }
-                            return p;
-                        })
-                    };
-                }
-                return group;
-            }));
-
-            if (e.message === 'FAVORITES_LIMIT_EXCEEDED') {
+            if (e.message === 'PLAYLISTS_FULL') {
+                setUnfavoriteToDelete(puzzle);
+            } else if (e.message === 'FAVORITES_LIMIT_EXCEEDED') {
                 setToast({ message: 'Favorites limit reached! Maximum 10 starred puzzles allowed.', type: 'error' });
                 setTimeout(() => setToast(null), 5000);
             } else {
@@ -305,27 +369,72 @@ export default function Repertoire() {
         }
     };
 
-    // Individual puzzle delete handler
-    const handleDeletePuzzle = async (puzzleId, playlistIdx) => {
-        if (!window.confirm('Are you sure you want to delete this puzzle?')) return;
+    const handleConfirmUnfavoriteDelete = async () => {
+        if (!unfavoriteToDelete) return;
         try {
-            await deletePuzzle(user.uid, puzzleId);
-            setGroups(prev => prev.map(group => {
-                if (group.playlistIndex === playlistIdx) {
-                    return {
-                        ...group,
-                        puzzles: group.puzzles.filter(p => p.id !== puzzleId)
-                    };
-                }
-                return group;
-            }));
-            setToast({ message: 'Puzzle deleted successfully!', type: 'success' });
+            await deletePuzzle(user.uid, unfavoriteToDelete.id);
+            setFavPuzzles(prev => prev.filter(p => p.id !== unfavoriteToDelete.id));
+            setUnfavoriteToDelete(null);
+            setToast({ message: 'Puzzle permanently deleted since playlists are full.', type: 'success' });
             setTimeout(() => setToast(null), 3000);
+            await loadRepertoire();
         } catch (e) {
-            console.error('Delete puzzle failed:', e);
+            console.error('Delete failed:', e);
             setToast({ message: 'Failed to delete puzzle.', type: 'error' });
             setTimeout(() => setToast(null), 3000);
         }
+    };
+
+    const handleCancelUnfavorite = () => {
+        setUnfavoriteToDelete(null);
+    };
+
+    // Individual puzzle delete handler
+    const handleDeletePuzzle = (puzzleId, playlistIdx) => {
+        showConfirm(
+            'Are you sure you want to delete this puzzle?',
+            async () => {
+                try {
+                    await deletePuzzle(user.uid, puzzleId);
+                    if (playlistIdx === 'favorites') {
+                        setFavPuzzles(prev => prev.filter(p => p.id !== puzzleId));
+                    } else {
+                        setGroups(prev => prev.map(group => {
+                            if (group.playlistIndex === playlistIdx) {
+                                const updatedPuzzles = group.puzzles.filter(p => p.id !== puzzleId);
+                                const total = updatedPuzzles.length;
+                                const solved = updatedPuzzles.filter(p => p.reviewState?.isSolved).length;
+                                const mastered = updatedPuzzles.filter(p => p.status === 'mastered').length;
+                                const progress = total > 0 ? Math.round((solved / total) * 100) : 0;
+                                const mastery = mastered >= total * 0.8 ? 'Expert'
+                                              : mastered >= total * 0.5 ? 'Advanced'
+                                              : solved  >= total * 0.5 ? 'Intermediate'
+                                              : 'Novice';
+                                return {
+                                    ...group,
+                                    puzzles: updatedPuzzles,
+                                    total,
+                                    solved,
+                                    mastered,
+                                    progress,
+                                    mastery
+                                };
+                            }
+                            return group;
+                        }));
+                    }
+                    setToast({ message: 'Puzzle deleted successfully!', type: 'success' });
+                    setTimeout(() => setToast(null), 3000);
+                } catch (e) {
+                    console.error('Delete puzzle failed:', e);
+                    setToast({ message: 'Failed to delete puzzle.', type: 'error' });
+                    setTimeout(() => setToast(null), 3000);
+                }
+            },
+            null,
+            'Delete Puzzle',
+            'confirm'
+        );
     };
 
     // Playlist batch delete handler
@@ -416,16 +525,21 @@ export default function Repertoire() {
                 return;
             }
 
-            const proceed = window.confirm(`You have active filters. The training session will only include the ${Math.min(filteredPuzzles.length, 10)} puzzles matching your selected filters. Proceed?`);
-            if (!proceed) return;
+            showConfirm(
+                `You have active filters. The training session will only include the ${Math.min(filteredPuzzles.length, 10)} puzzles matching your selected filters. Proceed?`,
+                () => {
+                    // Shuffle and select up to 10 matching puzzles
+                    const shuffled = [...filteredPuzzles].sort(() => 0.5 - Math.random());
+                    const selected = shuffled.slice(0, 10).map(p => p.id);
 
-            // Shuffle and select up to 10 matching puzzles
-            const shuffled = [...filteredPuzzles].sort(() => 0.5 - Math.random());
-            const selected = shuffled.slice(0, 10).map(p => p.id);
-
-            sessionStorage.setItem('oneTimePlaylist', JSON.stringify(selected));
-            sessionStorage.setItem('oneTimeSessionResults', JSON.stringify([]));
-            navigate('/dashboard/train?session=one-time');
+                    sessionStorage.setItem('oneTimePlaylist', JSON.stringify(selected));
+                    sessionStorage.setItem('oneTimeSessionResults', JSON.stringify([]));
+                    navigate('/dashboard/train?session=one-time');
+                },
+                null,
+                'Proceed with Filters',
+                'confirm'
+            );
         } else {
             // Unfiltered session: shuffle and take 10 random puzzles from the entire deck
             const shuffled = [...allPuzzles].sort(() => 0.5 - Math.random());
@@ -437,61 +551,46 @@ export default function Repertoire() {
         }
     };
 
-    // Date checker helper for [NEW] badge
-    const isAddedToday = (createdAt) => {
-        if (!createdAt) return false;
-        const date = createdAt.toDate ? createdAt.toDate() : new Date(createdAt);
-        const today = new Date();
-        return date.getDate() === today.getDate() &&
-            date.getMonth() === today.getMonth() &&
-            date.getFullYear() === today.getFullYear();
-    };
 
     // Filters and search logic (Only by puzzle name)
-    const filteredGroups = (() => {
-        if (statusFilter === 'favorites') {
-            // Collect ALL favorites across all playlists into one virtual group
-            const allFavPuzzles = groups.flatMap(group =>
-                group.puzzles.filter(puzzle => {
-                    if (!puzzle.isFavorite) return false;
-                    const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
-                    return !searchQuery.trim() || nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
-                })
-            );
-            return [{
-                playlistIndex: 'fav-virtual',
-                title: '⭐ Favorites',
-                puzzles: allFavPuzzles,
-                filteredPuzzles: allFavPuzzles,
-                total: allFavPuzzles.length,
-                solved: allFavPuzzles.filter(p => p.status === 'solved' || p.status === 'mastered').length,
-                progress: allFavPuzzles.length > 0 ? Math.round((allFavPuzzles.filter(p => p.status === 'solved' || p.status === 'mastered').length / allFavPuzzles.length) * 100) : 0
-            }];
-        }
+    const filteredGroups = groups.map(group => {
+        const filteredPuzzles = group.puzzles.filter(puzzle => {
+            const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
+            const matchesSearch =
+                !searchQuery.trim() ||
+                nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
 
-        return groups.map(group => {
-            const filteredPuzzles = group.puzzles.filter(puzzle => {
-                const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
-                const matchesSearch =
-                    !searchQuery.trim() ||
-                    nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
+            const matchesStatus =
+                statusFilter === 'all' ||
+                (statusFilter === 'new' && puzzle.status === 'new') ||
+                (statusFilter === 'active' && (puzzle.status === 'active' || puzzle.lastResult === 'fail')) ||
+                (statusFilter === 'white' && puzzle.userColor === 'white') ||
+                (statusFilter === 'black' && puzzle.userColor === 'black');
 
-                const matchesStatus =
-                    statusFilter === 'all' ||
-                    (statusFilter === 'new' && puzzle.status === 'new') ||
-                    (statusFilter === 'active' && (puzzle.status === 'active' || puzzle.lastResult === 'fail')) ||
-                    (statusFilter === 'white' && puzzle.userColor === 'white') ||
-                    (statusFilter === 'black' && puzzle.userColor === 'black');
-
-                return matchesSearch && matchesStatus;
-            });
-
-            return {
-                ...group,
-                filteredPuzzles
-            };
+            return matchesSearch && matchesStatus;
         });
-    })();
+
+        return {
+            ...group,
+            filteredPuzzles
+        };
+    });
+
+    const filteredFavPuzzles = favPuzzles.filter(puzzle => {
+        const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
+        const matchesSearch =
+            !searchQuery.trim() ||
+            nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
+
+        const matchesStatus =
+            statusFilter === 'all' ||
+            (statusFilter === 'new' && puzzle.status === 'new') ||
+            (statusFilter === 'active' && (puzzle.status === 'active' || puzzle.lastResult === 'fail')) ||
+            (statusFilter === 'white' && puzzle.userColor === 'white') ||
+            (statusFilter === 'black' && puzzle.userColor === 'black');
+
+        return matchesSearch && matchesStatus;
+    });
 
     const hasAnyPuzzles = groups.some(g => g.total > 0 || g.puzzles.length > 0);
 
@@ -531,20 +630,6 @@ export default function Repertoire() {
         );
     };
 
-    const statusBadge = (status) => {
-        switch (status) {
-            case 'new':
-                return 'bg-blue-500/10 border-blue-500/20 text-blue-400';
-            case 'active':
-                return 'bg-red-500/10 border-red-500/20 text-red-400';
-            case 'solved':
-                return 'bg-green-500/10 border-green-500/20 text-green-400';
-            case 'mastered':
-                return 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400';
-            default:
-                return 'bg-white/5 border-white/10 text-chess-text-secondary';
-        }
-    };
 
     return (
         <DashboardLayout>
@@ -612,7 +697,6 @@ export default function Repertoire() {
                             className="bg-chess-bg border border-white/10 text-white py-2 pl-3 pr-8 rounded-lg focus:border-chess-accent focus:ring-0 text-sm font-medium transition-colors"
                         >
                             <option value="all">All Puzzles</option>
-                            <option value="favorites">Starred Puzzles</option>
                             <option value="new">New Puzzles</option>
                             <option value="active">Failed Puzzles</option>
                             <option value="white">White Color</option>
@@ -857,7 +941,7 @@ export default function Repertoire() {
                                                                         <p className="text-white font-bold text-base truncate max-w-[280px] sm:max-w-[400px]">
                                                                             {puzzle.customName || `${puzzle.opening} - ${puzzle.theme || 'Blunder'} #${puzzle.id.slice(0, 4)}`}
                                                                         </p>
-                                                                        {isAddedToday(puzzle.createdAt) && (
+                                                                        {puzzle.status === 'new' && (
                                                                             <span className="text-[9px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 animate-pulse shrink-0">
                                                                                 NEW
                                                                             </span>
@@ -886,11 +970,19 @@ export default function Repertoire() {
                                                                 {/* Star favorite toggle */}
                                                                 <button
                                                                     onClick={() => handleToggleFavorite(puzzle, playlist.playlistIndex)}
+                                                                    disabled={!puzzle.isFavorite && favPuzzles.length >= 10}
                                                                     className={`p-1.5 rounded-lg transition-all ${puzzle.isFavorite
                                                                         ? 'text-yellow-400 bg-yellow-400/10 hover:bg-yellow-400/20'
-                                                                        : 'text-chess-text-secondary hover:text-yellow-400 hover:bg-yellow-400/10'
+                                                                        : !puzzle.isFavorite && favPuzzles.length >= 10
+                                                                            ? 'text-chess-text-secondary/35 cursor-not-allowed opacity-45'
+                                                                            : 'text-chess-text-secondary hover:text-yellow-400 hover:bg-yellow-400/10'
                                                                         }`}
-                                                                    title={puzzle.isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                                                                    title={puzzle.isFavorite 
+                                                                        ? "Remove from Favorites" 
+                                                                        : favPuzzles.length >= 10 
+                                                                            ? "Favorites limit reached (10/10)" 
+                                                                            : "Add to Favorites"
+                                                                    }
                                                                 >
                                                                     <Star size={16} fill={puzzle.isFavorite ? "currentColor" : "none"} />
                                                                 </button>
@@ -942,10 +1034,6 @@ export default function Repertoire() {
                                                                     <Trash2 size={14} />
                                                                 </button>
 
-                                                                <span className={`text-[9px] uppercase font-bold tracking-wider px-2 py-0.5 rounded border ${statusBadge(puzzle.status)}`}>
-                                                                    {puzzle.status}
-                                                                </span>
-
                                                                 <button
                                                                     onClick={() => navigate(`/dashboard/train?puzzleId=${puzzle.id}`)}
                                                                     className="bg-chess-accent hover:bg-chess-accent-hover text-white px-3.5 py-1.5 rounded-lg font-bold text-xs shadow-md flex items-center gap-1 transition-all"
@@ -962,6 +1050,188 @@ export default function Repertoire() {
                                 </div>
                             );
                         })}
+
+                        {/* Permanent Favorites Card */}
+                        {viewMode === 'playlists' && (
+                            <div
+                                id="favorites-card"
+                                className={`bg-chess-panel border border-white/5 rounded-2xl overflow-hidden transition-all duration-300 ${
+                                    expandedGroups['favorites'] ? 'ring-1 ring-chess-accent/30 shadow-2xl' : 'hover:border-white/10'
+                                }`}
+                            >
+                                {/* Favorites Header */}
+                                <div
+                                    onClick={() => toggleGroup('favorites')}
+                                    className="p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 cursor-pointer hover:bg-white/[0.02] transition-colors select-none"
+                                >
+                                    <div className="flex gap-4 items-start sm:items-center flex-1 min-w-0">
+                                        {/* Icon */}
+                                        <div className="w-12 h-12 bg-yellow-400/10 border border-yellow-400/25 text-yellow-400 rounded-xl flex items-center justify-center shrink-0 shadow-lg">
+                                            <Star size={24} fill="currentColor" />
+                                        </div>
+
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-3 mb-1 flex-wrap">
+                                                <h3 className="text-xl font-bold text-white truncate max-w-[220px] sm:max-w-[360px]">
+                                                    Favorites
+                                                </h3>
+                                            </div>
+
+                                            <div className="flex items-center gap-4 text-xs text-chess-text-secondary mt-1 flex-wrap">
+                                                <span className="flex items-center gap-1">
+                                                    <Star size={14} /> {favPuzzles.length}/10 puzzles
+                                                </span>
+                                                {filteredFavPuzzles.length !== favPuzzles.length && (
+                                                    <span className="text-chess-accent">({filteredFavPuzzles.length} match filters)</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Gauges and Collapsible Indicators */}
+                                    <div className="flex items-center gap-6 w-full sm:w-auto justify-between sm:justify-end border-t border-white/5 pt-4 sm:pt-0 sm:border-0 shrink-0">
+                                        {favPuzzles.length > 0 && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleTrainPlaylist(favPuzzles);
+                                                }}
+                                                className="px-4 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-extrabold text-xs shadow-lg shadow-chess-accent/15 transition-all flex items-center gap-1.5 hover:-translate-y-0.5 active:scale-95 cursor-pointer shrink-0"
+                                                title="Start training favorites"
+                                            >
+                                                <Play size={14} fill="currentColor" /> Train Favorites
+                                            </button>
+                                        )}
+                                        <div className="flex items-center gap-6">
+                                            <CircularGauge
+                                                percentage={favPuzzles.length > 0 ? Math.round((favPuzzles.filter(p => p.reviewState?.isSolved).length / favPuzzles.length) * 100) : 0}
+                                                color="stroke-yellow-400"
+                                                title="Mastery"
+                                                subtitle={`${favPuzzles.filter(p => p.reviewState?.isSolved).length}/${favPuzzles.length} Solved`}
+                                            />
+                                        </div>
+                                        <div className="text-chess-text-secondary hover:text-white p-2 rounded-lg hover:bg-white/5 transition-colors">
+                                            {expandedGroups['favorites'] ? <ChevronUp size={24} /> : <ChevronDown size={24} />}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Expanded Puzzles List */}
+                                {expandedGroups['favorites'] && (
+                                    <div className="border-t border-white/5 bg-black/10 transition-all duration-300">
+                                        <div className="p-4 space-y-3">
+                                            {favPuzzles.length === 0 ? (
+                                                <div className="p-8 text-center text-chess-text-secondary bg-chess-panel/10 rounded-xl flex flex-col items-center justify-center gap-2">
+                                                    <Star size={32} className="opacity-30 mb-1" />
+                                                    <p className="font-bold text-sm text-white/85">Your Favorites Set is Empty</p>
+                                                    <p className="text-xs max-w-sm">Star some puzzles from your playlists or training arena to add them here!</p>
+                                                </div>
+                                            ) : filteredFavPuzzles.length === 0 ? (
+                                                <div className="p-6 text-center text-chess-text-secondary bg-chess-panel/10 rounded-xl">
+                                                    No puzzles match the search/filters inside this section.
+                                                </div>
+                                            ) : (
+                                                filteredFavPuzzles.map((puzzle) => (
+                                                    <div
+                                                        key={puzzle.id}
+                                                        className="bg-chess-panel/30 border border-white/5 p-4 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-white/[0.01] transition-all"
+                                                    >
+                                                        {/* Puzzle info / Inline rename */}
+                                                        <div className="flex-1 min-w-0">
+                                                            {editingPuzzleId === puzzle.id ? (
+                                                                <div className="flex items-center gap-2 max-w-md">
+                                                                    <input
+                                                                        type="text"
+                                                                        value={renameValue}
+                                                                        onChange={(e) => setRenameValue(e.target.value)}
+                                                                        onKeyDown={(e) => { if (e.key === 'Enter') handleSaveRename(puzzle.id); }}
+                                                                        className="flex-1 bg-chess-bg border border-chess-accent focus:ring-0 text-white px-3 py-1 rounded text-sm placeholder:text-chess-text-secondary focus:outline-none"
+                                                                        placeholder="Custom puzzle name"
+                                                                        disabled={renaming}
+                                                                        autoFocus
+                                                                    />
+                                                                    <button
+                                                                        onClick={() => handleSaveRename(puzzle.id)}
+                                                                        disabled={renaming}
+                                                                        className="p-1 text-green-400 hover:text-green-300 disabled:opacity-50"
+                                                                        title="Save Name"
+                                                                    >
+                                                                        {renaming ? <Loader2 className="animate-spin" size={18} /> : <Check size={18} />}
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={handleCancelRename}
+                                                                        disabled={renaming}
+                                                                        className="p-1 text-red-400 hover:text-red-300"
+                                                                        title="Cancel"
+                                                                    >
+                                                                        <X size={18} />
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                    <p className="text-white font-bold text-base truncate max-w-[280px] sm:max-w-[400px]">
+                                                                        {puzzle.customName || `${puzzle.opening} - ${puzzle.theme || 'Blunder'} #${puzzle.id.slice(0, 4)}`}
+                                                                    </p>
+                                                                    {puzzle.status === 'new' && (
+                                                                        <span className="text-[9px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 animate-pulse shrink-0">
+                                                                            NEW
+                                                                        </span>
+                                                                    )}
+                                                                    <button
+                                                                        onClick={() => handleStartRename(puzzle)}
+                                                                        className="text-chess-text-secondary hover:text-white p-1 rounded hover:bg-white/5 transition-all opacity-80"
+                                                                        title="Rename Puzzle"
+                                                                    >
+                                                                        <Edit3 size={13} />
+                                                                    </button>
+                                                                </div>
+                                                            )}
+
+                                                            <div className="flex items-center gap-4 text-xs text-chess-text-secondary mt-1">
+                                                                {puzzle.reviewState?.attempts > 0 && (
+                                                                    <span className="flex items-center gap-1">
+                                                                        <Clock size={12} /> {puzzle.reviewState.attempts} tries ({puzzle.reviewState.successCount} solved)
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Interactive controls & Status Badge & Train Action */}
+                                                        <div className="flex flex-wrap items-center gap-3 shrink-0 justify-between md:justify-end border-t md:border-0 border-white/5 pt-3 md:pt-0">
+                                                            {/* Star favorite toggle */}
+                                                            <button
+                                                                onClick={() => handleToggleFavorite(puzzle, 'favorites')}
+                                                                className="p-1.5 rounded-lg transition-all text-yellow-400 bg-yellow-400/10 hover:bg-yellow-400/20"
+                                                                title="Remove from Favorites"
+                                                            >
+                                                                <Star size={16} fill="currentColor" />
+                                                            </button>
+
+                                                            {/* Delete Puzzle */}
+                                                            <button
+                                                                onClick={() => handleDeletePuzzle(puzzle.id, 'favorites')}
+                                                                className="text-chess-text-secondary hover:text-red-405 p-1 rounded hover:bg-white/5 transition-all"
+                                                                title="Delete Puzzle"
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+
+
+                                                            <button
+                                                                onClick={() => navigate(`/dashboard/train?puzzleId=${puzzle.id}`)}
+                                                                className="bg-chess-accent hover:bg-chess-accent-hover text-white px-3.5 py-1.5 rounded-lg font-bold text-xs shadow-md flex items-center gap-1 transition-all"
+                                                            >
+                                                                Train <ArrowRight size={12} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -1107,7 +1377,55 @@ export default function Repertoire() {
                     </div>
                 )}
 
+                {/* Unfavoriting Deletion Warning Modal */}
+                {unfavoriteToDelete && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        {/* Backdrop */}
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onClick={handleCancelUnfavorite} />
+
+                        {/* Modal Card */}
+                        <div className="bg-chess-panel border border-red-500/30 max-w-md w-full rounded-2xl shadow-2xl p-6 relative overflow-hidden z-10">
+                            {/* Accent background glow */}
+                            <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 to-transparent pointer-events-none" />
+
+                            <div className="flex items-center gap-3 text-red-400 mb-4">
+                                <AlertTriangle size={32} />
+                                <h3 className="text-xl font-bold font-serif text-white">Delete Puzzle</h3>
+                            </div>
+
+                            <p className="text-chess-text-secondary text-sm mb-4 leading-relaxed">
+                                All training playlists are full (20/20 each). Unfavoriting this puzzle will permanently delete it. Do you want to proceed?
+                            </p>
+
+                            <div className="flex items-center justify-end gap-3">
+                                <button
+                                    onClick={handleCancelUnfavorite}
+                                    className="px-4 py-2 text-sm text-chess-text-secondary hover:text-white rounded-lg transition-colors"
+                                >
+                                    Cancel (Keep Starred)
+                                </button>
+                                <button
+                                    onClick={handleConfirmUnfavoriteDelete}
+                                    className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold text-sm transition-all shadow-lg shadow-red-600/15"
+                                >
+                                    Yes, Delete Permanently
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
             </div>
+            
+            {/* Themed Confirm Dialog */}
+            <ThemedDialog
+                open={confirmConfig.show}
+                title={confirmConfig.title}
+                message={confirmConfig.message}
+                type={confirmConfig.type}
+                onConfirm={confirmConfig.onConfirm}
+                onCancel={confirmConfig.onCancel}
+            />
         </DashboardLayout>
     );
 }
