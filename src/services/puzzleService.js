@@ -72,6 +72,11 @@ export async function saveNewPuzzles(userId, newPuzzles) {
         throw new Error('No puzzles to save');
     }
 
+    const stats = await getUserPuzzleStats(userId);
+    if (stats.total + newPuzzles.length > 70) {
+        throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
+    }
+
     const saveBatch = writeBatch(db);
 
     newPuzzles.forEach(puzzle => {
@@ -237,11 +242,58 @@ export async function toggleFavorite(userId, puzzleId, isFavorite) {
         if (favorites.length >= 10) {
             throw new Error('FAVORITES_LIMIT_EXCEEDED');
         }
+        
+        // Update the puzzle's favorite status — must succeed
+        const puzzleDocRef = doc(db, 'puzzles', puzzleId);
+        await updateDoc(puzzleDocRef, { isFavorite: true });
+    } else {
+        // Unfavoriting flow: put in first available playlist spot
+        // Fetch all puzzles for this user to check playlist occupancy
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId)
+        );
+        const snapshot = await getDocs(q);
+        const allPuzzles = snapshot.docs.map(d => d.data());
+        
+        const nonFavorites = allPuzzles.filter(p => !p.isFavorite);
+        
+        const count0 = nonFavorites.filter(p => p.playlistIndex === 0).length;
+        const count1 = nonFavorites.filter(p => p.playlistIndex === 1).length;
+        const count2 = nonFavorites.filter(p => p.playlistIndex === 2).length;
+        
+        let targetIndex = -1;
+        if (count0 < 20) {
+            targetIndex = 0;
+        } else if (count1 < 20) {
+            targetIndex = 1;
+        } else if (count2 < 20) {
+            targetIndex = 2;
+        } else {
+            throw new Error('PLAYLISTS_FULL');
+        }
+        
+        // Ensure the playlist is created in the user profile if it doesn't exist
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        const playlistNames = userSnap.data()?.playlistNames || {};
+        
+        if (targetIndex > 0 && playlistNames[targetIndex] === undefined) {
+            await updateDoc(userRef, {
+                [`playlistNames.${targetIndex}`]: `Playlist ${targetIndex + 1}`
+            });
+        }
+        
+        // Update puzzle: playlistIndex and isFavorite
+        const puzzleDocRef = doc(db, 'puzzles', puzzleId);
+        await updateDoc(puzzleDocRef, { 
+            playlistIndex: targetIndex,
+            isFavorite: false 
+        });
+        
+        // Trigger limit enforcement / rotation
+        await enforcePlaylistLimits(userId);
     }
-
-    // PRIMARY: Update the puzzle's favorite status — must succeed
-    const puzzleDocRef = doc(db, 'puzzles', puzzleId);
-    await updateDoc(puzzleDocRef, { isFavorite });
 }
 
 
@@ -290,6 +342,34 @@ export async function logPuzzleAttempt(userId, puzzleId, result, timeTaken, move
         timestamp: serverTimestamp(),
         moveSequence
     });
+
+    // Run pruning worker in background to prevent storage bloat (limit to 200 most recent logs)
+    pruneActivityLogs(userId).catch(e => console.warn('Prune activity logs failed:', e));
+}
+
+/**
+ * Prune activity logs older than 200 entries for a user
+ */
+export async function pruneActivityLogs(userId) {
+    try {
+        const q = query(
+            collection(db, 'activity_logs'),
+            where('userId', '==', userId),
+            orderBy('timestamp', 'desc')
+        );
+        const snapshot = await getDocs(q);
+        if (snapshot.size > 200) {
+            const batch = writeBatch(db);
+            const docsToDelete = snapshot.docs.slice(200);
+            docsToDelete.forEach(d => {
+                batch.delete(d.ref);
+            });
+            await batch.commit();
+            console.log(`Pruned ${docsToDelete.length} old activity logs for user ${userId}`);
+        }
+    } catch (e) {
+        console.warn('Failed to prune activity logs:', e);
+    }
 }
 
 /**
@@ -674,6 +754,7 @@ export async function getUserPlaylists(userId) {
 
         snapshot.docs.forEach(d => {
             const data = d.data();
+            if (data.isFavorite === true) return; // Exclude favorited puzzles from playlists
             const puzzle = normalizePuzzle(data, d.id);
             const idx = puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0;
             const targetIdx = parseInt(idx, 10);
@@ -911,7 +992,10 @@ export async function clearPlaylist(userId, playlistIndex) {
         const batch = writeBatch(db);
         if (!snapshot.empty) {
             snapshot.docs.forEach(d => {
-                batch.delete(doc(db, 'puzzles', d.id));
+                const data = d.data();
+                if (data.isFavorite !== true) {
+                    batch.delete(doc(db, 'puzzles', d.id));
+                }
             });
         }
 
@@ -936,6 +1020,16 @@ export async function clearPlaylist(userId, playlistIndex) {
  * @param {Object} puzzle - Puzzle data (fen, correctMove, customName, opening, userColor, isFavorite)
  */
 export async function saveCustomPuzzle(userId, puzzle) {
+    const stats = await getUserPuzzleStats(userId);
+    if (stats.total >= 70) {
+        throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
+    }
+    if (puzzle.isFavorite) {
+        const favorites = await getFavoritePuzzles(userId);
+        if (favorites.length >= 10) {
+            throw new Error('FAVORITES_LIMIT_EXCEEDED');
+        }
+    }
     const puzzleRef = doc(collection(db, 'puzzles'));
     
     await setDoc(puzzleRef, {
@@ -966,9 +1060,36 @@ export async function saveCustomPuzzle(userId, puzzle) {
 }
 
 /**
+ * Mark all existing 'new' puzzles as 'active' for a user
+ */
+export async function clearOldNewPuzzles(userId) {
+    try {
+        const q = query(
+            collection(db, 'puzzles'),
+            where('userId', '==', userId),
+            where('status', '==', 'new')
+        );
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+            const batch = writeBatch(db);
+            snapshot.docs.forEach(d => {
+                batch.update(d.ref, { status: 'active' });
+            });
+            await batch.commit();
+            console.log(`Cleared 'new' status for ${snapshot.size} puzzles of user ${userId}`);
+        }
+    } catch (e) {
+        console.warn('Failed to clear old new puzzles:', e);
+    }
+}
+
+/**
  * Save pending scans to a temporary document field
  */
 export async function savePendingPuzzles(userId, puzzles) {
+    // Clear the 'new' status on all previous puzzles in the repertoire
+    await clearOldNewPuzzles(userId);
+
     const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {
         pendingScan: {
@@ -1029,9 +1150,75 @@ export async function clearPendingPuzzles(userId) {
 }
 
 /**
+ * Save a single approved pending puzzle and update the user's pendingScan list:
+ * 1. Save the puzzle to the 'puzzles' collection.
+ * 2. Update the user document's pendingScan list with the puzzle removed.
+ * 3. Enforce sequential playlist limits.
+ */
+export async function approvePendingPuzzle(userId, puzzleToSave, puzzlesList, indexToApprove) {
+    const stats = await getUserPuzzleStats(userId);
+    if (stats.total >= 70) {
+        throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
+    }
+    if (puzzleToSave.isFavorite) {
+        const favorites = await getFavoritePuzzles(userId);
+        if (favorites.length >= 10) {
+            throw new Error('FAVORITES_LIMIT_EXCEEDED');
+        }
+    }
+    const batch = writeBatch(db);
+
+    const puzzleRef = doc(collection(db, 'puzzles'));
+    
+    batch.set(puzzleRef, {
+        fen: puzzleToSave.fen,
+        correctMove: puzzleToSave.correctMove,
+        customName: puzzleToSave.customName || 'Blunder Position',
+        opening: puzzleToSave.opening || puzzleToSave.openingName || 'Unknown Opening',
+        theme: puzzleToSave.theme || 'Blunder',
+        userColor: puzzleToSave.userColor || puzzleToSave.playerColor || 'white',
+        type: 'opening_blunder',
+        userId,
+        isFavorite: puzzleToSave.isFavorite || false,
+        playlistIndex: puzzleToSave.playlistIndex !== undefined ? puzzleToSave.playlistIndex : 0,
+        status: 'new',
+        createdAt: serverTimestamp(),
+        reviewState: {
+            isSolved: false,
+            attempts: 0,
+            lastAttempt: null,
+            successCount: 0,
+            failCount: 0
+        }
+    });
+
+    const updatedPuzzles = puzzlesList.filter((_, idx) => idx !== indexToApprove);
+    const userRef = doc(db, 'users', userId);
+
+    if (updatedPuzzles.length === 0) {
+        batch.update(userRef, {
+            pendingScan: deleteField()
+        });
+    } else {
+        batch.update(userRef, {
+            'pendingScan.puzzles': updatedPuzzles,
+            'pendingScan.count': updatedPuzzles.length
+        });
+    }
+
+    await batch.commit();
+    await enforcePlaylistLimits(userId);
+    return updatedPuzzles;
+}
+
+/**
  * Save approved puzzles in batch
  */
 export async function saveApprovedPuzzles(userId, approvedPuzzles) {
+    const stats = await getUserPuzzleStats(userId);
+    if (stats.total + approvedPuzzles.length > 70) {
+        throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
+    }
     const batch = writeBatch(db);
     
     approvedPuzzles.forEach(puzzle => {
