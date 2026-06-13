@@ -17,7 +17,7 @@ export class GameAnalyzer {
      * @param {number} engineDepth - Stockfish evaluation depth setting.
      * @returns {Promise<Array>} - Array of found puzzles.
      */
-    async analyze(game, playerColor, engineDepth = 14) {
+    async analyze(game, playerColor, engineDepth = 14, maxPuzzlesAllowed = 999) {
         const chess = new Chess();
         const puzzles = [];
 
@@ -44,6 +44,12 @@ export class GameAnalyzer {
             }
 
             for (let i = 0; i < maxPlies; i++) {
+                // Stop evaluating immediately if we hit our capacity limits
+                if (puzzles.length >= maxPuzzlesAllowed) {
+                    console.log(`Manual analysis stopped early: reached maximum puzzle limit (${maxPuzzlesAllowed})`);
+                    break;
+                }
+
                 const move = history[i];
 
                 // FEN BEFORE the move (This is the puzzle start position)
@@ -67,8 +73,9 @@ export class GameAnalyzer {
 
                 // CHECK PLAYER TURN
                 // If it's White's turn (i=0,2...), playerColor must be white to analyze user blunder.
-                // If i=0 (White), and player is White -> TRUE.
-                const isPlayerTurn = (move.color === 'w' && playerColor === 'white') ||
+                // Support 'both' color option which analyzes moves from both sides.
+                const isPlayerTurn = playerColor === 'both' ||
+                    (move.color === 'w' && playerColor === 'white') ||
                     (move.color === 'b' && playerColor === 'black');
 
                 if (!isPlayerTurn) {
@@ -108,6 +115,8 @@ export class GameAnalyzer {
                         if (detected) openingName = detected.name;
                     }
 
+                    const resolvedColor = move.color === 'w' ? 'white' : 'black';
+
                     puzzles.push({
                         id: `${game.id}-${i}`,
                         fen: fenBefore, // Use Full, Valid FEN from chess.js
@@ -121,8 +130,8 @@ export class GameAnalyzer {
                         evalLoss: evalLoss,
                         gameUrl: `https://lichess.org/${game.id}#${i}`,
                         tags: ["Opening Blunder"],
-                        playerColor: playerColor,
-                        userColor: playerColor
+                        playerColor: resolvedColor,
+                        userColor: resolvedColor
                     });
                 }
             }

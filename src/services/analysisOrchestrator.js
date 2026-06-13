@@ -11,7 +11,7 @@
  */
 
 import { getUserProfile } from './userService';
-import { isGameProcessed, markGameProcessed, getUserPlaylists, savePendingPuzzles, saveNewPuzzles } from './puzzleService';
+import { isGameProcessed, markGameProcessed, savePendingPuzzles, saveNewPuzzles, getUserPuzzleStats } from './puzzleService';
 import { lichessApi } from '../lib/lichessApi';
 import { gameAnalyzer } from '../lib/gameAnalyzer';
 import { engineService } from './engineService';
@@ -57,15 +57,13 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
             throw new Error('No Lichess account linked. Please link your account in Settings.');
         }
 
-        // Calculate remaining playlist capacity space (max 60 total in standard playlists 1, 2, 3)
-        const playlists = await getUserPlaylists(userId);
-        const totalCurrentPuzzles = playlists
-            .filter(pl => pl.playlistIndex <= 2)
-            .reduce((sum, pl) => sum + pl.total, 0);
-        const maxNewPuzzlesAllowed = Math.max(0, 60 - totalCurrentPuzzles);
+        // Calculate remaining capacity space (max 70 total unique puzzles)
+        const stats = await getUserPuzzleStats(userId);
+        const totalPuzzlesCount = stats.total;
+        const maxNewPuzzlesAllowed = Math.max(0, 70 - totalPuzzlesCount);
 
         if (maxNewPuzzlesAllowed === 0) {
-            throw new Error('Ingestion blocked: Your training playlists are fully populated (60/60 puzzles). Clear some playlists or train them to free up space.');
+            throw new Error('Ingestion blocked: Your repertoire is at maximum capacity (70/70 puzzles). Clear some puzzles or playlists to scan again.');
         }
 
         // Step 2: Fetch recent games from Lichess
@@ -213,6 +211,11 @@ export async function quickAnalyze(userId, onProgress = () => { }) {
 
         if (!lichessUsername) {
             throw new Error('No Lichess account linked');
+        }
+
+        const stats = await getUserPuzzleStats(userId);
+        if (stats.total >= 70) {
+            throw new Error('Ingestion blocked: Your repertoire is at maximum capacity (70/70 puzzles). Clear some puzzles or playlists to scan again.');
         }
 
         onProgress({ stage: 'Fetching recent game...', progress: 20 });
