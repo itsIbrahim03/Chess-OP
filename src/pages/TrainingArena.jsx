@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
-import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye, Loader2, Play } from 'lucide-react';
+import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye, Loader2, Play, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import {
     getNextPuzzle,
@@ -10,7 +10,8 @@ import {
     updatePuzzleReview,
     toggleFavorite,
     getUserPlaylists,
-    getFavoritePuzzles
+    getFavoritePuzzles,
+    deletePuzzle
 } from '../services/puzzleService';
 import { incrementTotalSolved, getUserProfile } from '../services/userService';
 import { useNavigate } from 'react-router-dom';
@@ -39,6 +40,7 @@ export default function TrainingArena() {
     const [favoriteLoading, setFavoriteLoading] = useState(false);
     const [toastError, setToastError] = useState(null);
     const [seenPuzzleIds, setSeenPuzzleIds] = useState([]);
+    const [unfavoriteToDelete, setUnfavoriteToDelete] = useState(null);
 
     // Board customization
     const [boardTheme, setBoardTheme] = useState(getBoardTheme('classic'));
@@ -75,6 +77,17 @@ export default function TrainingArena() {
             if (profile?.settings?.autoNext !== undefined) setAutoNext(profile.settings.autoNext);
             if (profile?.settings?.showCoordinates !== undefined) setShowCoordinates(profile.settings.showCoordinates);
         }).catch(() => {});
+    }, [user]);
+
+    // Fetch favorites count on mount
+    useEffect(() => {
+        if (!user) return;
+        getFavoritePuzzles(user.uid).then(favs => {
+            setFavoritesList(favs);
+            setFavoritesCount(favs.length);
+        }).catch(e => {
+            console.error('Failed to load favorites count on mount:', e);
+        });
     }, [user]);
 
     // ─── On Mount: check for ?puzzleId= or ?session= in URL ─────────────────
@@ -393,24 +406,72 @@ export default function TrainingArena() {
         });
     }
 
+    const handleConfirmUnfavoriteDelete = async () => {
+        if (!unfavoriteToDelete) return;
+        try {
+            await deletePuzzle(user.uid, unfavoriteToDelete.id);
+            setFavoritesCount(prev => Math.max(0, prev - 1));
+            setUnfavoriteToDelete(null);
+            // Proceed to the next puzzle in the session
+            await loadNextPuzzle(false);
+        } catch (e) {
+            console.error('Delete failed:', e);
+            setToastError('Failed to delete puzzle.');
+            setTimeout(() => setToastError(null), 3000);
+        }
+    };
+
+    const handleCancelUnfavorite = () => {
+        setUnfavoriteToDelete(null);
+    };
+
     async function handleToggleFavorite() {
         const puzzle = puzzleRef.current;
         if (!puzzle || favoriteLoading) return;
 
-        setFavoriteLoading(true);
         const newFavState = !isFavorited;
-        setIsFavorited(newFavState);
         setToastError(null);
+
+        if (newFavState) {
+            if (favoritesCount >= 10) {
+                setToastError('Favorites limit reached! Maximum 10 starred puzzles allowed.');
+                setTimeout(() => setToastError(null), 5000);
+                return;
+            }
+        } else {
+            // Check playlists occupancy locally
+            try {
+                const playlists = await getUserPlaylists(user.uid);
+                const count0 = playlists.find(g => g.playlistIndex === 0)?.puzzles.length || 0;
+                const count1 = playlists.find(g => g.playlistIndex === 1)?.puzzles.length || 0;
+                const count2 = playlists.find(g => g.playlistIndex === 2)?.puzzles.length || 0;
+                if (count0 >= 20 && count1 >= 20 && count2 >= 20) {
+                    setUnfavoriteToDelete(puzzle);
+                    return;
+                }
+            } catch (e) {
+                console.warn('Playlists occupancy pre-check failed:', e);
+            }
+        }
+
+        setFavoriteLoading(true);
+        setIsFavorited(newFavState);
 
         try {
             await toggleFavorite(user.uid, puzzle.id, newFavState);
+            setFavoritesCount(prev => newFavState ? prev + 1 : Math.max(0, prev - 1));
         } catch (e) {
             console.error('toggleFavorite failed:', e.code, e.message);
             setIsFavorited(!newFavState);
-            setToastError(e.message === 'FAVORITES_LIMIT_EXCEEDED'
-                ? 'Favorites limit reached! Maximum 10 starred puzzles allowed.'
-                : `Star failed: ${e.message}`);
-            setTimeout(() => setToastError(null), 5000);
+            if (e.message === 'PLAYLISTS_FULL') {
+                setUnfavoriteToDelete(puzzle);
+            } else if (e.message === 'FAVORITES_LIMIT_EXCEEDED') {
+                setToastError('Favorites limit reached! Maximum 10 starred puzzles allowed.');
+                setTimeout(() => setToastError(null), 5000);
+            } else {
+                setToastError(`Star failed: ${e.message}`);
+                setTimeout(() => setToastError(null), 5000);
+            }
         } finally {
             setFavoriteLoading(false);
         }
@@ -622,12 +683,19 @@ export default function TrainingArena() {
                                     {/* Star / Favorite Button */}
                                     <button
                                         onClick={handleToggleFavorite}
-                                        disabled={favoriteLoading}
-                                        title={isFavorited ? 'Remove from Favorites' : 'Add to Favorites'}
+                                        disabled={favoriteLoading || (!isFavorited && favoritesCount >= 10)}
+                                        title={isFavorited 
+                                            ? 'Remove from Favorites' 
+                                            : favoritesCount >= 10 
+                                                ? 'Favorites limit reached (10/10)' 
+                                                : 'Add to Favorites'
+                                        }
                                         className={`p-2 rounded-lg transition-all ${
                                             isFavorited
                                                 ? 'text-yellow-400 bg-yellow-400/10 hover:bg-yellow-400/20'
-                                                : 'text-chess-text-secondary hover:text-yellow-400 hover:bg-yellow-400/10'
+                                                : !isFavorited && favoritesCount >= 10
+                                                    ? 'text-chess-text-secondary/35 cursor-not-allowed opacity-45'
+                                                    : 'text-chess-text-secondary hover:text-yellow-400 hover:bg-yellow-400/10'
                                         } ${favoriteLoading ? 'opacity-50 cursor-wait' : ''}`}
                                     >
                                         <Star size={22} fill={isFavorited ? 'currentColor' : 'none'} />
@@ -829,6 +897,45 @@ export default function TrainingArena() {
                     </div>
                 </div>
             )}
+
+            {/* Unfavoriting Deletion Warning Modal */}
+            {unfavoriteToDelete && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm cursor-pointer" onClick={handleCancelUnfavorite} />
+
+                    {/* Modal Card */}
+                    <div className="bg-chess-panel border border-red-500/30 max-w-md w-full rounded-2xl shadow-2xl p-6 relative overflow-hidden z-10">
+                        {/* Accent background glow */}
+                        <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 to-transparent pointer-events-none" />
+
+                        <div className="flex items-center gap-3 text-red-400 mb-4">
+                            <AlertTriangle size={32} />
+                            <h3 className="text-xl font-bold font-serif text-white">Delete Puzzle</h3>
+                        </div>
+
+                        <p className="text-chess-text-secondary text-sm mb-4 leading-relaxed">
+                            All training playlists are full (20/20 each). Unfavoriting this puzzle will permanently delete it. Do you want to proceed?
+                        </p>
+
+                        <div className="flex items-center justify-end gap-3">
+                            <button
+                                onClick={handleCancelUnfavorite}
+                                className="px-4 py-2 text-sm text-chess-text-secondary hover:text-white rounded-lg transition-colors"
+                            >
+                                Cancel (Keep Starred)
+                            </button>
+                            <button
+                                onClick={handleConfirmUnfavoriteDelete}
+                                className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold text-sm transition-all shadow-lg shadow-red-600/15"
+                            >
+                                Yes, Delete Permanently
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
         </DashboardLayout>
     );
 }

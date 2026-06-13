@@ -333,7 +333,7 @@ export default function DashboardLayout({ children }) {
                 {analysisState.isRunning && (
                     <div 
                         onClick={() => setIsProgressCollapsed(true)}
-                        className={`fixed bottom-6 right-6 z-[100] sm:w-[480px] w-[90vw] bg-chess-panel/98 border border-chess-accent/40 rounded-2xl p-7 shadow-2xl backdrop-blur-lg transition-all duration-500 ease-in-out cursor-pointer hover:border-chess-accent/60 ${
+                        className={`fixed bottom-24 right-6 z-[100] sm:w-[480px] w-[90vw] bg-chess-panel/98 border border-chess-accent/40 rounded-2xl p-7 shadow-2xl backdrop-blur-lg transition-all duration-500 ease-in-out cursor-pointer hover:border-chess-accent/60 ${
                             isProgressCollapsed ? 'translate-x-[calc(100%+32px)] opacity-0 pointer-events-none' : 'translate-x-0'
                         }`}
                         title="Click anywhere to minimize"
@@ -384,7 +384,7 @@ export default function DashboardLayout({ children }) {
                 {analysisState.isRunning && isProgressCollapsed && (
                     <button
                         onClick={() => setIsProgressCollapsed(false)}
-                        className="fixed bottom-12 right-0 z-[100] bg-chess-panel/98 border-y border-l border-chess-accent/40 rounded-l-2xl p-4 pl-3.5 shadow-2xl flex items-center gap-2.5 text-chess-accent hover:text-white hover:bg-chess-accent/10 transition-all cursor-pointer animate-in slide-in-from-right duration-300"
+                        className="fixed bottom-28 right-0 z-[100] bg-chess-panel/98 border-y border-l border-chess-accent/40 rounded-l-2xl p-4 pl-3.5 shadow-2xl flex items-center gap-2.5 text-chess-accent hover:text-white hover:bg-chess-accent/10 transition-all cursor-pointer animate-in slide-in-from-right duration-300"
                         title="Expand Progress Card"
                     >
                         <div className="relative">
@@ -407,7 +407,7 @@ export default function DashboardLayout({ children }) {
                             setShowWizard(true);
                             setShowToast(false);
                         }}
-                        className="fixed bottom-6 right-6 z-[110] bg-chess-panel/90 border border-chess-accent/30 hover:border-chess-accent/60 p-4 rounded-2xl shadow-2xl flex items-center gap-4 cursor-pointer backdrop-blur-lg animate-in slide-in-from-bottom duration-300 max-w-sm group"
+                        className="fixed bottom-24 right-6 z-[110] bg-chess-panel/90 border border-chess-accent/30 hover:border-chess-accent/60 p-4 rounded-2xl shadow-2xl flex items-center gap-4 cursor-pointer backdrop-blur-lg animate-in slide-in-from-bottom duration-300 max-w-sm group"
                     >
                         <div className="w-10 h-10 bg-chess-accent/15 border border-chess-accent/20 rounded-xl flex items-center justify-center text-chess-accent group-hover:scale-105 transition-transform shrink-0">
                             <Brain size={20} className="animate-pulse" />
@@ -433,7 +433,7 @@ export default function DashboardLayout({ children }) {
                 {/* Scan Alert Toast Notification */}
                 {scanAlertToast.show && (
                     <div
-                        className={`fixed bottom-6 right-6 z-[110] bg-chess-panel/95 border ${
+                        className={`fixed bottom-24 right-6 z-[110] bg-chess-panel/95 border ${
                             scanAlertToast.type === 'error' ? 'border-chess-status-error/40' : 'border-chess-accent/30'
                         } p-5 rounded-2xl shadow-2xl flex items-center gap-4 max-w-md backdrop-blur-lg animate-in slide-in-from-bottom duration-300`}
                     >

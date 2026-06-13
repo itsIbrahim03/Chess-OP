@@ -288,8 +288,18 @@ export default function Dashboard() {
           <div className="text-2xl font-bold mb-4">Resume Training</div>
           <div className="flex flex-col sm:flex-row gap-3">
             <button 
-              onClick={(e) => { e.stopPropagation(); navigate('/dashboard/analysis-board', { state: { activeTab: 'ingest' } }); }}
-              className="flex-1 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors"
+              onClick={(e) => { 
+                e.stopPropagation(); 
+                if (puzzleStats?.total >= 70) return;
+                navigate('/dashboard/analysis-board', { state: { activeTab: 'ingest' } }); 
+              }}
+              disabled={puzzleStats?.total >= 70}
+              title={puzzleStats?.total >= 70 ? "Repertoire capacity full (70/70)" : "Analyse recent games"}
+              className={`flex-1 px-3 py-1.5 rounded-lg font-bold text-xs flex items-center justify-center gap-1.5 transition-colors ${
+                puzzleStats?.total >= 70
+                  ? 'bg-white/5 border border-white/5 text-white/30 cursor-not-allowed opacity-50'
+                  : 'bg-white/10 hover:bg-white/20 border border-white/20 text-white'
+              }`}
             >
               <Search size={14} /> Analyse
             </button>
@@ -499,7 +509,7 @@ export default function Dashboard() {
           <section>
             <div className="flex items-center justify-between mb-3">
               <h2
-                onClick={() => navigate('/dashboard/repertoire?filter=favorites')}
+                onClick={() => navigate('/dashboard/repertoire?expand=favorites')}
                 className="text-xl font-bold text-white flex items-center gap-2 cursor-pointer hover:text-yellow-400 transition-colors group"
               >
                 <Star size={20} className="text-yellow-400" /> Favorites
@@ -543,15 +553,6 @@ export default function Dashboard() {
                     </div>
                   </div>
                 ))}
-
-                {favorites.length >= 3 && (
-                  <button
-                    onClick={() => navigate('/dashboard/repertoire?filter=favorites')}
-                    className="w-full text-center text-sm text-chess-accent hover:text-white py-2 transition-colors"
-                  >
-                    View all favorites →
-                  </button>
-                )}
               </div>
             )}
           </section>
@@ -605,7 +606,7 @@ export default function Dashboard() {
                 <>
                   <h3 className="text-2xl font-serif font-bold text-white">1. Link Lichess Account 🌐</h3>
                   <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md">
-                    Connect your Lichess username in the Settings panel so Chess-OP can pull your matches. (If you don't have one, you can import custom positions manually!)
+                    Connect your Lichess username in the Settings panel so Chess-OP can pull your matches. (If you don't have one, you can import custom games manually!)
                   </p>
                 </>
               )}
@@ -614,7 +615,7 @@ export default function Dashboard() {
                 <>
                   <h3 className="text-2xl font-serif font-bold text-white">2. Analysis Manager 🧠</h3>
                   <p className="text-chess-text-secondary text-sm leading-relaxed max-w-md">
-                    Go to the 'Analysis Manager' to run Stockfish scans. You can select Rapid/Blitz time controls, date range, or paste manual FEN/PGNs to generate puzzles.
+                    Go to the 'Analysis Manager' to run Stockfish scans. You can select Rapid/Blitz/Classical time controls, date range, or paste manual PGNs to generate puzzles.
                   </p>
                 </>
               )}
