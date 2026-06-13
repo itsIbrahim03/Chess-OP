@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { getPendingPuzzles, saveApprovedPuzzles, clearPendingPuzzles, getUserPlaylists, createPlaylist, ignorePendingPuzzle } from '../services/puzzleService';
-import { Loader2, ArrowRight, Save, X, Sparkles, ArrowLeft, EyeOff, Clock } from 'lucide-react';
+import { getPendingPuzzles, getUserPlaylists, createPlaylist, ignorePendingPuzzle, approvePendingPuzzle, getFavoritePuzzles } from '../services/puzzleService';
+import { Loader2, ArrowRight, Save, X, Sparkles, EyeOff, Clock } from 'lucide-react';
 import { getUserProfile } from '../services/userService';
 import { getPieceImageUrl } from '../lib/pieceSets';
+import ThemedDialog from './ThemedDialog';
 
 function MiniBoardPreview({ fen, pieceSet }) {
     if (!fen) return null;
@@ -56,21 +57,33 @@ function MiniBoardPreview({ fen, pieceSet }) {
 export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
     const [loading, setLoading] = useState(true);
     const [puzzles, setPuzzles] = useState([]);
-    const [currentIndex, setCurrentIndex] = useState(0);
     const [playlists, setPlaylists] = useState([]);
     const [saving, setSaving] = useState(false);
     const [pieceSet, setPieceSet] = useState('cburnett');
+    const [favsCount, setFavsCount] = useState(0);
+
+    // Initial total count of puzzles for progress indicator
+    const [initialTotalCount, setInitialTotalCount] = useState(0);
 
     // Form inputs for current puzzle
     const [customName, setCustomName] = useState('');
-    const [playlistIndex, setPlaylistIndex] = useState('0');
+    const [playlistIndex, setPlaylistIndex] = useState('fav');
 
-    // Track edited details for all puzzles in batch
-    const [editedPuzzles, setEditedPuzzles] = useState([]);
-    
     // Create new playlist states
     const [totalPlaylistsCount, setTotalPlaylistsCount] = useState(0);
     const [newPlaylistName, setNewPlaylistName] = useState('');
+
+    // Themed Alert Modal State
+    const [alertConfig, setAlertConfig] = useState({
+        show: false,
+        title: '',
+        message: '',
+        type: 'info'
+    });
+
+    const showAlert = (message, type = 'info', title = '') => {
+        setAlertConfig({ show: true, message, type, title });
+    };
 
     useEffect(() => {
         if (userId) {
@@ -83,17 +96,23 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
         try {
             const list = await getPendingPuzzles(userId);
             setPuzzles(list);
+            setInitialTotalCount(list.length);
             
-            // Initialize edited puzzles list
+            // Get user's playlists
             const allPlaylists = await getUserPlaylists(userId);
             setTotalPlaylistsCount(allPlaylists.length);
-            let available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
+            
+            // Map all playlists (we will show full ones as disabled in the dropdown)
+            const mappedPlaylists = allPlaylists.map(pl => ({
                 index: pl.playlistIndex,
                 title: pl.title,
                 total: pl.total
             }));
+            setPlaylists(mappedPlaylists);
 
-            setPlaylists(available);
+            // Get favorites count
+            const favs = await getFavoritePuzzles(userId);
+            setFavsCount(favs.length);
 
             // Load user profile config for piece set
             try {
@@ -105,28 +124,20 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                 console.warn('Failed to load user profile settings in wizard:', err);
             }
 
-            const defaultPlIdx = available.length > 0 ? available[0].index : 0;
-            const defaultIsFav = available.length === 0;
-
-            const initialEdited = list.map(p => ({
-                ...p,
-                customName: `${p.opening || p.openingName || 'Opening'} blunder`,
-                playlistIndex: defaultPlIdx,
-                isFavorite: defaultIsFav
-            }));
-            setEditedPuzzles(initialEdited);
-
-            // Set initial dropdown value
-            if (available.length > 0) {
-                setPlaylistIndex(available[0].index.toString());
-            } else {
-                setPlaylistIndex('fav');
+            // Set default destination for the first puzzle
+            // - first non-full playlist, or 'fav' if 0 playlists exist (or all are full)
+            let defaultVal = 'fav';
+            const firstNonFull = mappedPlaylists.find(pl => pl.total < 20);
+            if (firstNonFull) {
+                defaultVal = firstNonFull.index.toString();
+            } else if (favs.length >= 10) {
+                defaultVal = 'create_new';
             }
+            setPlaylistIndex(defaultVal);
 
-            if (initialEdited.length > 0) {
-                setCustomName(initialEdited[0].customName);
+            if (list.length > 0) {
+                setCustomName(`${list[0].opening || list[0].openingName || 'Opening'} blunder`);
             }
-
         } catch (e) {
             console.error('Failed to load pending puzzles:', e);
         } finally {
@@ -134,72 +145,82 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
         }
     };
 
-    const handlePrev = () => {
-        if (currentIndex > 0) {
-            // Save current edits
-            const updated = [...editedPuzzles];
-            const isFav = playlistIndex === 'fav';
-            const targetPlIdx = isFav ? 0 : parseInt(playlistIndex, 10);
-            updated[currentIndex] = {
-                ...updated[currentIndex],
-                customName: customName.trim(),
-                playlistIndex: targetPlIdx,
-                isFavorite: isFav
-            };
-            setEditedPuzzles(updated);
-
-            const prevIdx = currentIndex - 1;
-            setCurrentIndex(prevIdx);
-            setCustomName(updated[prevIdx].customName);
-            const prevVal = updated[prevIdx].isFavorite ? 'fav' : updated[prevIdx].playlistIndex.toString();
-            setPlaylistIndex(prevVal);
+    const determineDefaultDestination = (allPlaylists, lastSelectedIdx, currentFavsCount) => {
+        if (lastSelectedIdx !== null && lastSelectedIdx !== 'fav' && lastSelectedIdx !== 'create_new') {
+            const lastPl = allPlaylists.find(pl => pl.index.toString() === lastSelectedIdx.toString());
+            // Only select it if it's still not full
+            if (lastPl && lastPl.total < 20) {
+                return lastSelectedIdx.toString();
+            }
         }
+        // Default to the first non-full playlist
+        const firstNonFull = allPlaylists.find(pl => pl.total < 20);
+        if (firstNonFull) {
+            return firstNonFull.index.toString();
+        }
+        // If all playlists are full, check favorites set
+        if (currentFavsCount < 10) {
+            return 'fav';
+        }
+        // If favorites is ALSO full, default to 'create_new'
+        return 'create_new';
     };
 
     const handleIgnoreCurrent = async () => {
-        const puzzleToIgnore = puzzles[currentIndex];
-        if (!puzzleToIgnore) return;
+        if (puzzles.length === 0 || saving) return;
+        const currentPuzzle = puzzles[0];
+        const gameId = currentPuzzle.gameId;
         
-        const gameId = puzzleToIgnore.gameId;
         setSaving(true);
         try {
             // Remove the puzzle from Firestore and clean up processed game entry
-            const updatedPuzzles = await ignorePendingPuzzle(userId, gameId, puzzles, currentIndex);
-            
-            // Remove from edited puzzles list
-            const newEdited = editedPuzzles.filter((_, idx) => idx !== currentIndex);
+            const updatedPuzzles = await ignorePendingPuzzle(userId, gameId, puzzles, 0);
             
             if (updatedPuzzles.length === 0) {
                 setPuzzles([]);
-                setEditedPuzzles([]);
-                if (onSaveSuccess) onSaveSuccess(0);
+                if (onSaveSuccess) onSaveSuccess(1);
                 onClose();
             } else {
                 setPuzzles(updatedPuzzles);
-                setEditedPuzzles(newEdited);
+                // Load details of the next puzzle (which is now at index 0)
+                const nextPuzzle = updatedPuzzles[0];
+                setCustomName(`${nextPuzzle.opening || nextPuzzle.openingName || 'Opening'} blunder`);
                 
-                // Adjust index
-                const nextIndex = currentIndex >= updatedPuzzles.length ? updatedPuzzles.length - 1 : currentIndex;
-                setCurrentIndex(nextIndex);
-                setCustomName(newEdited[nextIndex].customName);
-                const nextVal = newEdited[nextIndex].isFavorite ? 'fav' : newEdited[nextIndex].playlistIndex.toString();
-                setPlaylistIndex(nextVal);
+                // Set default destination for the next puzzle
+                const nextDefault = determineDefaultDestination(playlists, playlistIndex, favsCount);
+                setPlaylistIndex(nextDefault);
             }
         } catch (err) {
             console.error('Failed to ignore puzzle:', err);
-            alert('Failed to ignore puzzle. Please try again.');
+            showAlert('Failed to ignore puzzle. Please try again.', 'error', 'Error');
         } finally {
             setSaving(false);
         }
     };
 
     const handleNext = async () => {
+        if (puzzles.length === 0 || saving) return;
+        
         let finalPlIdx = playlistIndex;
         const isFav = playlistIndex === 'fav';
 
+        if (isFav && favsCount >= 10) {
+            showAlert('Favorites limit reached! Maximum 10 starred puzzles allowed.', 'warning', 'Limit Reached');
+            return;
+        }
+
+        if (!isFav && playlistIndex !== 'create_new') {
+            const targetPl = playlists.find(pl => pl.index.toString() === finalPlIdx.toString());
+            if (targetPl && targetPl.total >= 20) {
+                showAlert('Selected playlist is full (max 20 puzzles).', 'warning', 'Playlist Full');
+                return;
+            }
+        }
+
+        // 1. Handle playlist creation if requested
         if (playlistIndex === 'create_new') {
             if (!newPlaylistName.trim()) {
-                alert('Please enter a name for the new playlist.');
+                showAlert('Please enter a name for the new playlist.', 'warning', 'Name Required');
                 return;
             }
             setSaving(true);
@@ -211,58 +232,78 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                 // Refresh playlists list
                 const allPlaylists = await getUserPlaylists(userId);
                 setTotalPlaylistsCount(allPlaylists.length);
-                let available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
+                const mappedPlaylists = allPlaylists.map(pl => ({
                     index: pl.playlistIndex,
                     title: pl.title,
                     total: pl.total
                 }));
-                setPlaylists(available);
+                setPlaylists(mappedPlaylists);
                 setPlaylistIndex(finalPlIdx);
             } catch (err) {
                 console.error('Failed to create playlist:', err);
-                alert('Failed to create playlist. Please try again.');
+                showAlert('Failed to create playlist. Please try again.', 'error', 'Error');
                 setSaving(false);
                 return;
-            } finally {
-                setSaving(false);
             }
         }
 
         const targetPlIdx = isFav ? 0 : parseInt(finalPlIdx, 10);
 
-        // Save current edits
-        const updated = [...editedPuzzles];
-        updated[currentIndex] = {
-            ...updated[currentIndex],
+        // 2. Prepare current puzzle data to save
+        const currentPuzzle = puzzles[0];
+        const puzzleToSave = {
+            ...currentPuzzle,
             customName: customName.trim(),
             playlistIndex: targetPlIdx,
             isFavorite: isFav
         };
-        setEditedPuzzles(updated);
 
-        // Move forward or finish
-        if (currentIndex < puzzles.length - 1) {
-            const nextIdx = currentIndex + 1;
-            setCurrentIndex(nextIdx);
-            setCustomName(updated[nextIdx].customName);
-            const nextVal = updated[nextIdx].isFavorite ? 'fav' : updated[nextIdx].playlistIndex.toString();
-            setPlaylistIndex(nextVal);
-        } else {
-            // Save all!
-            saveAll(updated);
-        }
-    };
-
-    const saveAll = async (finalData) => {
         setSaving(true);
         try {
-            await saveApprovedPuzzles(userId, finalData);
-            await clearPendingPuzzles(userId);
-            if (onSaveSuccess) onSaveSuccess(finalData.length);
-            onClose();
-        } catch (e) {
-            console.error('Failed to save puzzles in batch:', e);
-            alert('Failed to save puzzles. Please try again.');
+            // Save instantly and remove from pending Scan list in Firestore
+            const updatedPuzzles = await approvePendingPuzzle(userId, puzzleToSave, puzzles, 0);
+
+            // Dispatch global event to notify active pages (like AnalysisBoard) to update counts
+            window.dispatchEvent(new CustomEvent('repertoire-updated'));
+
+            // Fetch the updated playlists and favorites counts from Firestore
+            const allPlaylists = await getUserPlaylists(userId);
+            setTotalPlaylistsCount(allPlaylists.length);
+            const mappedPlaylists = allPlaylists.map(pl => ({
+                index: pl.playlistIndex,
+                title: pl.title,
+                total: pl.total
+            }));
+            setPlaylists(mappedPlaylists);
+
+            const favs = await getFavoritePuzzles(userId);
+            setFavsCount(favs.length);
+
+            if (updatedPuzzles.length === 0) {
+                setPuzzles([]);
+                if (onSaveSuccess) onSaveSuccess(1);
+                onClose();
+            } else {
+                setPuzzles(updatedPuzzles);
+                // Load details of the next puzzle (which is now at index 0)
+                const nextPuzzle = updatedPuzzles[0];
+                setCustomName(`${nextPuzzle.opening || nextPuzzle.openingName || 'Opening'} blunder`);
+                
+                // Set default destination for the next puzzle
+                // If the playlist we just saved to is still available (has < 20 puzzles), keep it selected!
+                // Otherwise, fall back to the next available playlist or favorites.
+                const nextDefault = determineDefaultDestination(mappedPlaylists, finalPlIdx, favs.length);
+                setPlaylistIndex(nextDefault);
+            }
+        } catch (err) {
+            console.error('Failed to save approved puzzle:', err);
+            if (err.message === 'FAVORITES_LIMIT_EXCEEDED') {
+                showAlert('Favorites limit reached! Maximum 10 starred puzzles allowed.', 'warning', 'Limit Reached');
+            } else if (err.message === 'REPERTOIRE_LIMIT_EXCEEDED') {
+                showAlert('Repertoire capacity reached! Your repertoire already has 70 puzzles. Clear some puzzles to save new ones.', 'warning', 'Repertoire Full');
+            } else {
+                showAlert('Failed to save puzzle. Please try again.', 'error', 'Error');
+            }
         } finally {
             setSaving(false);
         }
@@ -283,7 +324,7 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
         return null;
     }
 
-    const currentPuzzle = puzzles[currentIndex];
+    const currentPuzzle = puzzles[0];
 
     return (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
@@ -301,7 +342,9 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                         </div>
                         <div>
                             <h3 className="text-2xl font-serif font-bold text-white tracking-wide">Blunder Ingestion Wizard</h3>
-                            <p className="text-xs text-chess-text-secondary">Puzzle {currentIndex + 1} of {puzzles.length}</p>
+                            <p className="text-xs text-chess-text-secondary">
+                                Puzzle {initialTotalCount - puzzles.length + 1} of {initialTotalCount}
+                            </p>
                         </div>
                     </div>
                     <button 
@@ -314,18 +357,21 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
 
                 {/* Progress dot indicators */}
                 <div className="flex gap-1.5 justify-center w-full">
-                    {puzzles.map((_, idx) => (
-                        <div 
-                            key={idx}
-                            className={`h-1.5 rounded-full transition-all duration-300 ${
-                                idx === currentIndex 
-                                    ? 'w-8 bg-chess-accent' 
-                                    : idx < currentIndex 
-                                        ? 'w-2.5 bg-emerald-500' 
-                                        : 'w-2.5 bg-white/10'
-                            }`}
-                        />
-                    ))}
+                    {Array.from({ length: initialTotalCount }).map((_, idx) => {
+                        const currentProcessedCount = initialTotalCount - puzzles.length;
+                        return (
+                            <div 
+                                key={idx}
+                                className={`h-1.5 rounded-full transition-all duration-300 ${
+                                    idx === currentProcessedCount 
+                                        ? 'w-8 bg-chess-accent' 
+                                        : idx < currentProcessedCount 
+                                            ? 'w-2.5 bg-emerald-500' 
+                                            : 'w-2.5 bg-white/10'
+                                }`}
+                            />
+                        );
+                    })}
                 </div>
 
                 {/* Body split: Mini Board Preview + Info Form */}
@@ -371,14 +417,21 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                                 className="w-full bg-chess-bg border border-white/10 rounded-xl text-xs py-2.5 px-3 text-white focus:outline-none focus:border-chess-accent cursor-pointer"
                             >
                                 {playlists.map(pl => (
-                                    <option key={pl.index} value={pl.index.toString()}>
-                                        {pl.title} ({pl.total}/20)
+                                    <option 
+                                        key={pl.index} 
+                                        value={pl.index.toString()}
+                                        disabled={pl.total >= 20}
+                                        className={pl.total >= 20 ? 'text-white/30' : ''}
+                                    >
+                                        {pl.title} {pl.total >= 20 ? '(Full - 20/20)' : `(${pl.total}/20)`}
                                     </option>
                                 ))}
                                 {totalPlaylistsCount < 3 && (
                                     <option value="create_new">➕ Create New Playlist...</option>
                                 )}
-                                <option value="fav">⭐ Starred / Favorites (Max 10)</option>
+                                <option value="fav" disabled={favsCount >= 10}>
+                                    ⭐ Starred / Favorites ({favsCount}/10)
+                                </option>
                             </select>
 
                             {playlistIndex === 'create_new' && (
@@ -408,15 +461,6 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                         <Clock size={14} />
                         Save Later
                     </button>
-
-                    <button
-                        onClick={handlePrev}
-                        disabled={currentIndex === 0 || saving}
-                        className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 border border-white/10 text-white rounded-xl font-bold transition-all text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
-                    >
-                        <ArrowLeft size={14} />
-                        Previous
-                    </button>
                     
                     <button
                         onClick={handleIgnoreCurrent}
@@ -439,7 +483,7 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                             </>
                         ) : (
                             <>
-                                {currentIndex === puzzles.length - 1 ? (
+                                {puzzles.length === 1 ? (
                                     <>
                                         <Save size={14} />
                                         Finish & Save
@@ -456,6 +500,15 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
                 </div>
 
             </div>
+
+            {/* Themed Alert Modal */}
+            <ThemedDialog
+                open={alertConfig.show}
+                title={alertConfig.title}
+                message={alertConfig.message}
+                type={alertConfig.type}
+                onClose={() => setAlertConfig(prev => ({ ...prev, show: false }))}
+            />
         </div>
     );
 }
