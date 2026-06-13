@@ -9,11 +9,13 @@ import {
     Zap, Flame, Clock, Calendar, Hash, Save, Upload, FileText, Search, Play,
     ChevronDown, Folder, AlertTriangle, Loader2
 } from 'lucide-react';
-import { saveCustomPuzzle, getUserPlaylists, createPlaylist, getPendingPuzzles, clearPendingPuzzles } from '../services/puzzleService';
+import { getUserPlaylists, getPendingPuzzles, clearPendingPuzzles, getUserPuzzleStats, savePendingPuzzles } from '../services/puzzleService';
 import { backgroundAnalysisService } from '../services/backgroundAnalysisService';
 import { getPieceImageUrl } from '../lib/pieceSets';
 import { engineService } from '../services/engineService';
 import { OpeningDetector } from '../lib/openingDetector';
+import { gameAnalyzer } from '../lib/gameAnalyzer';
+import ThemedDialog from '../components/ThemedDialog';
 
 export default function AnalysisBoard() {
     const { user } = useAuth();
@@ -33,24 +35,43 @@ export default function AnalysisBoard() {
     const [ingestError, setIngestError] = useState(null);
 
     // Manual Import States
-    const [importTab, setImportTab] = useState('fen'); // 'fen' | 'pgn'
-    const [fenInput, setFenInput] = useState('');
     const [pgnInput, setPgnInput] = useState('');
     const [savePuzzleColor, setSavePuzzleColor] = useState('white');
-    const [savePuzzleName, setSavePuzzleName] = useState('');
-    const [savePuzzleOpening, setSavePuzzleOpening] = useState('');
-    const [savePlaylistIdx, setSavePlaylistIdx] = useState('0'); // '0' | '1' | '2' | 'fav'
     const [saveStatus, setSaveStatus] = useState({ type: '', text: '' });
     const [pieceSet, setPieceSet] = useState('cburnett');
-    const [isPlaylistDropdownOpen, setIsPlaylistDropdownOpen] = useState(false);
 
     // Playlists capacity states
     const [playlistsSpace, setPlaylistsSpace] = useState({ total: 0, isFull: false });
-    const [availablePlaylists, setAvailablePlaylists] = useState([]);
-    const [totalPlaylistsCount, setTotalPlaylistsCount] = useState(0);
-    const [newPlaylistName, setNewPlaylistName] = useState('');
     const [hasPendingPuzzles, setHasPendingPuzzles] = useState(false);
     const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+    const [totalPuzzlesCount, setTotalPuzzlesCount] = useState(0);
+
+    // Themed Confirm/Alert Dialog State
+    const [confirmConfig, setConfirmConfig] = useState({
+        show: false,
+        title: '',
+        message: '',
+        type: 'confirm',
+        onConfirm: null,
+        onCancel: null
+    });
+
+    const showConfirm = (message, onConfirm = () => {}, onCancel = null, title = 'Confirm Action', type = 'confirm') => {
+        setConfirmConfig({
+            show: true,
+            title,
+            message,
+            type,
+            onConfirm: () => {
+                onConfirm();
+                setConfirmConfig(prev => ({ ...prev, show: false }));
+            },
+            onCancel: () => {
+                if (onCancel) onCancel();
+                setConfirmConfig(prev => ({ ...prev, show: false }));
+            }
+        });
+    };
 
     // Subscribe to background service status
     useEffect(() => {
@@ -77,7 +98,6 @@ export default function AnalysisBoard() {
             }).catch(() => {});
 
             getUserPlaylists(user.uid).then(allPlaylists => {
-                setTotalPlaylistsCount(allPlaylists.length);
                 const totalCurrent = allPlaylists
                     .filter(pl => pl.playlistIndex <= 2)
                     .reduce((sum, pl) => sum + pl.total, 0);
@@ -85,18 +105,10 @@ export default function AnalysisBoard() {
                     total: totalCurrent,
                     isFull: totalCurrent >= 60
                 });
+            }).catch(err => console.error(err));
 
-                const available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
-                    index: pl.playlistIndex,
-                    title: pl.title,
-                    total: pl.total
-                }));
-                setAvailablePlaylists(available);
-                if (available.length > 0) {
-                    setSavePlaylistIdx(available[0].index.toString());
-                } else {
-                    setSavePlaylistIdx('fav');
-                }
+            getUserPuzzleStats(user.uid).then(stats => {
+                setTotalPuzzlesCount(stats.total);
             }).catch(err => console.error(err));
 
             getPendingPuzzles(user.uid).then(pending => {
@@ -104,6 +116,35 @@ export default function AnalysisBoard() {
             }).catch(() => {});
         }
     }, [user?.uid, location.search]);
+
+    // Update puzzle counts and stats instantly when repertoire changes in Ingestion Wizard modal
+    useEffect(() => {
+        const handleRepertoireUpdate = () => {
+            if (!user?.uid) return;
+            getUserPlaylists(user.uid).then(allPlaylists => {
+                const totalCurrent = allPlaylists
+                    .filter(pl => pl.playlistIndex <= 2)
+                    .reduce((sum, pl) => sum + pl.total, 0);
+                setPlaylistsSpace({
+                    total: totalCurrent,
+                    isFull: totalCurrent >= 60
+                });
+            }).catch(err => console.error(err));
+
+            getUserPuzzleStats(user.uid).then(stats => {
+                setTotalPuzzlesCount(stats.total);
+            }).catch(err => console.error(err));
+
+            getPendingPuzzles(user.uid).then(pending => {
+                setHasPendingPuzzles(pending && pending.length > 0);
+            }).catch(() => {});
+        };
+
+        window.addEventListener('repertoire-updated', handleRepertoireUpdate);
+        return () => {
+            window.removeEventListener('repertoire-updated', handleRepertoireUpdate);
+        };
+    }, [user?.uid]);
 
     // Handle Time Control selections
     const handleToggleTimeControl = (tc) => {
@@ -124,8 +165,12 @@ export default function AnalysisBoard() {
             setIngestError('Please select at least one Time Control to scan.');
             return;
         }
-        if (playlistsSpace.isFull) {
-            setIngestError('Scan blocked: Your playlists are at full capacity (60/60). Please review or clear standard playlists first.');
+        if (totalPuzzlesCount >= 70) {
+            setIngestError('Scan blocked: Your repertoire is at maximum capacity (70/70 puzzles). Clear some puzzles or playlists to scan again.');
+            return;
+        }
+        if (saveStatus.type === 'loading') {
+            setIngestError('Scan blocked: A manual import is currently running. Please wait.');
             return;
         }
 
@@ -150,155 +195,99 @@ export default function AnalysisBoard() {
         });
     };
 
-    // Save puzzle manually
-    const handleSavePuzzle = async () => {
-        let targetFen = '';
-        let pgnOpening = '';
-
-        if (importTab === 'fen') {
-            if (!fenInput.trim()) {
-                setSaveStatus({ type: 'error', text: 'Please enter a FEN string' });
-                return;
-            }
-            try {
-                const testChess = new Chess(fenInput.trim());
-                targetFen = testChess.fen();
-            } catch {
-                setSaveStatus({ type: 'error', text: 'Invalid FEN string' });
-                return;
-            }
-        } else {
-            if (!pgnInput.trim()) {
-                setSaveStatus({ type: 'error', text: 'Please enter a PGN string' });
-                return;
-            }
-            try {
-                const testChess = new Chess();
-                testChess.loadPgn(pgnInput.trim());
-                targetFen = testChess.fen();
-                
-                const headers = testChess.header();
-                pgnOpening = headers.Opening || headers.opening || '';
-            } catch {
-                setSaveStatus({ type: 'error', text: 'Invalid PGN string' });
-                return;
-            }
+    // Run manual PGN analysis for opening blunders (moves 1-10)
+    const handleManualAnalyze = async () => {
+        if (analyzing) {
+            setSaveStatus({ type: 'error', text: 'Cannot start analysis while another scan is running.' });
+            return;
+        }
+        if (!pgnInput.trim()) {
+            setSaveStatus({ type: 'error', text: 'Please enter PGN text to analyze.' });
+            return;
         }
 
+        // Validate PGN structure
         try {
-            // Ensure targetFen turn matches savePuzzleColor
-            const fenParts = targetFen.split(' ');
-            if (fenParts[1] !== (savePuzzleColor === 'white' ? 'w' : 'b')) {
-                fenParts[1] = savePuzzleColor === 'white' ? 'w' : 'b';
-                fenParts[4] = '0';
-                fenParts[5] = '1';
-                targetFen = fenParts.join(' ');
-            }
-
-            // Validate position after turn sync
-            try {
-                const testChess = new Chess(targetFen);
-                if (testChess.isGameOver()) {
-                    setSaveStatus({ type: 'error', text: 'The position is already checkmate, stalemate, or drawn.' });
-                    return;
-                }
-            } catch {
-                setSaveStatus({ type: 'error', text: 'Invalid position for the selected turn color.' });
+            const testChess = new Chess();
+            testChess.loadPgn(pgnInput.trim());
+            if (testChess.history().length === 0) {
+                setSaveStatus({ type: 'error', text: 'The PGN contains no moves. Please enter a valid PGN.' });
                 return;
             }
+        } catch {
+            setSaveStatus({ type: 'error', text: 'Invalid PGN format.' });
+            return;
+        }
 
-            setSaveStatus({ type: 'loading', text: 'Analyzing position...' });
-
-            // Let the engine calculate the best move
-            engineService.init();
-            const analysis = await engineService.evaluatePosition(targetFen, 12);
-            const calculatedMove = analysis?.bestMove;
-
-            if (!calculatedMove || calculatedMove === '(none)') {
-                setSaveStatus({ type: 'error', text: 'Engine failed to find a valid move for this position.' });
-                return;
-            }
-
-            let finalPlIdx = savePlaylistIdx;
-            const isFav = savePlaylistIdx === 'fav';
-
-            if (savePlaylistIdx === 'create_new') {
-                if (!newPlaylistName.trim()) {
-                    setSaveStatus({ type: 'error', text: 'Please enter a name for the new playlist.' });
-                    return;
-                }
-                setSaveStatus({ type: 'loading', text: 'Creating new playlist...' });
-                const newIdx = await createPlaylist(user.uid, newPlaylistName);
-                finalPlIdx = newIdx.toString();
-                setNewPlaylistName('');
-            }
-
-            setSaveStatus({ type: 'loading', text: 'Saving puzzle...' });
-            const playlistIndex = isFav ? 0 : parseInt(finalPlIdx, 10);
-
-            let resolvedOpening = savePuzzleOpening.trim();
-            if (!resolvedOpening) {
-                resolvedOpening = pgnOpening;
-            }
-            if (!resolvedOpening) {
-                try {
-                    const detected = OpeningDetector.detect(targetFen);
-                    if (detected) {
-                        resolvedOpening = detected.name;
-                    }
-                } catch (e) {
-                    console.warn('Failed to detect opening from FEN:', e);
-                }
-            }
-            if (!resolvedOpening) {
-                resolvedOpening = 'Custom Import';
-            }
-
-            await saveCustomPuzzle(user.uid, {
-                fen: targetFen,
-                correctMove: calculatedMove,
-                customName: savePuzzleName.trim() || 'Custom Position',
-                opening: resolvedOpening,
-                theme: 'Custom Ingestion',
-                userColor: savePuzzleColor,
-                isFavorite: isFav,
-                playlistIndex
-            });
-
-            // Refresh playlists data
-            try {
-                const allPlaylists = await getUserPlaylists(user.uid);
-                setTotalPlaylistsCount(allPlaylists.length);
-                const totalCurrent = allPlaylists
-                    .filter(pl => pl.playlistIndex <= 2)
-                    .reduce((sum, pl) => sum + pl.total, 0);
-                setPlaylistsSpace({
-                    total: totalCurrent,
-                    isFull: totalCurrent >= 60
-                });
-
-                const available = allPlaylists.filter(pl => pl.total < 20).map(pl => ({
-                    index: pl.playlistIndex,
-                    title: pl.title,
-                    total: pl.total
-                }));
-                setAvailablePlaylists(available);
-                setSavePlaylistIdx(finalPlIdx);
-            } catch (e) {
-                console.error('Failed to reload playlists after save:', e);
-            }
-
-            setSaveStatus({ type: 'success', text: `Puzzle saved successfully! Best move: ${calculatedMove}` });
-            setSavePuzzleName('');
-            setSavePuzzleOpening('');
-            setFenInput('');
-            setPgnInput('');
-            setTimeout(() => {
-                setSaveStatus({ type: '', text: '' });
-            }, 4000);
+        // Get current stats and remaining capacity
+        setSaveStatus({ type: 'loading', text: 'Checking repertoire capacity...' });
+        let remainingSpace = 0;
+        try {
+            const stats = await getUserPuzzleStats(user.uid);
+            remainingSpace = Math.max(0, 70 - stats.total);
+            setTotalPuzzlesCount(stats.total);
         } catch (err) {
-            console.error('Failed to save manual puzzle:', err);
-            setSaveStatus({ type: 'error', text: `Failed to save: ${err.message}` });
+            console.error('Failed to get user stats:', err);
+        }
+
+        if (remainingSpace <= 0) {
+            showConfirm(
+                'Import Locked: Your repertoire is at the maximum limit of 70 unique puzzles. Clear some puzzles or playlists to scan again.',
+                () => {},
+                null,
+                'Repertoire Full',
+                'warning'
+            );
+            setSaveStatus({ type: 'error', text: 'Repertoire capacity full (70/70).' });
+            return;
+        }
+
+        setSaveStatus({ type: 'loading', text: 'Analyzing game opening (moves 1-10)...' });
+        setAnalyzing(true);
+        try {
+            // Initialize engine
+            engineService.init();
+            // Wait for engine to be ready
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            const game = {
+                id: `manual-${Date.now()}`,
+                pgn: pgnInput.trim(),
+                opening: null
+            };
+
+            // Analyze first 10 moves (depth 12 is fast and accurate)
+            const puzzles = await gameAnalyzer.analyze(game, savePuzzleColor, 12, remainingSpace);
+
+            if (puzzles.length === 0) {
+                setSaveStatus({ type: 'success', text: 'Analysis finished: No blunders found.' });
+                showConfirm(
+                    'No blunder puzzles were found in the first 10 moves (opening phase) of this game.',
+                    () => {},
+                    null,
+                    'No Blunders Found',
+                    'info'
+                );
+            } else {
+                setSaveStatus({ type: 'success', text: `Analysis complete! Found ${puzzles.length} blunder puzzle(s).` });
+                
+                // Save to Firestore pending Scan
+                await savePendingPuzzles(user.uid, puzzles);
+                
+                // Refresh parent counts and trigger wizard opening
+                window.dispatchEvent(new CustomEvent('repertoire-updated'));
+                
+                // Clear input
+                setPgnInput('');
+                
+                // Redirect / Open Ingestion Wizard
+                navigate('?review=true');
+            }
+        } catch (err) {
+            console.error('Manual game analysis failed:', err);
+            setSaveStatus({ type: 'error', text: `Analysis failed: ${err.message}` });
+        } finally {
+            setAnalyzing(false);
         }
     };
 
@@ -317,15 +306,34 @@ export default function AnalysisBoard() {
         }
     };
 
-    const selectedPlaylist = savePlaylistIdx === 'fav'
-        ? { title: 'Starred / Favorites', total: null }
-        : savePlaylistIdx === 'create_new'
-            ? { title: 'Create New Playlist...', total: null }
-            : availablePlaylists.find(pl => pl.index.toString() === savePlaylistIdx);
 
     return (
         <DashboardLayout>
             <div className="max-w-7xl mx-auto pb-12 px-4 sm:px-6">
+                {totalPuzzlesCount >= 70 && (
+                    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/85 backdrop-blur-md">
+                        <div className="bg-chess-panel border border-red-500/30 max-w-md w-full rounded-2xl shadow-2xl p-8 relative overflow-hidden z-10 text-center flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 duration-200">
+                            <div className="absolute inset-0 bg-gradient-to-br from-red-500/5 to-transparent pointer-events-none" />
+                            <div className="w-16 h-16 bg-red-500/15 border border-red-500/25 text-red-400 rounded-xl flex items-center justify-center shadow-lg shadow-red-500/5">
+                                <AlertTriangle size={32} />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-serif font-bold text-white tracking-wide mb-2">Repertoire Capacity Reached</h3>
+                                <p className="text-sm text-red-400 font-bold mb-1">Capacity: 70/70 Puzzles</p>
+                                <p className="text-chess-text-secondary text-xs leading-relaxed mt-4 max-w-xs mx-auto">
+                                    You have reached the maximum limit of 70 unique puzzles in your repertoire. 
+                                    To scan new games or manually import positions, you must first delete some existing puzzles.
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => navigate('/dashboard/repertoire')}
+                                className="mt-2 w-full py-3 bg-chess-accent hover:bg-chess-accent-hover text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-chess-accent/15 transition-all hover:-translate-y-0.5"
+                            >
+                                Go to My Repertoire
+                            </button>
+                        </div>
+                    </div>
+                )}
                 
                 {/* Header Block */}
                 <div className="mb-10 text-left relative">
@@ -499,12 +507,12 @@ export default function AnalysisBoard() {
 
 
                                 {playlistsSpace.isFull && (
-                                    <div className="mb-8 flex items-start gap-4 bg-red-500/10 border border-red-500/25 p-5 rounded-2xl text-red-400">
+                                    <div className="mb-8 flex items-start gap-4 bg-amber-500/10 border border-amber-500/25 p-5 rounded-2xl text-amber-500">
                                         <AlertCircle size={22} className="shrink-0 mt-0.5" />
                                         <div>
-                                            <h5 className="font-bold text-white text-base">Playlists Capacity Full (60/60 Puzzles)</h5>
+                                            <h5 className="font-bold text-white text-base">Standard Playlists Capacity Full (60/60 Puzzles)</h5>
                                             <p className="text-sm text-chess-text-secondary mt-1">
-                                                Your training decks have reached their maximum combined limit of 60 puzzles. Please clear or master some puzzles to free up space before scanning new matches.
+                                                Your standard training playlists have reached their limit of 60 puzzles. New scanned puzzles can only be saved to your Favorites set (max 10).
                                             </p>
                                         </div>
                                     </div>
@@ -618,11 +626,11 @@ export default function AnalysisBoard() {
                                 {/* Scan trigger */}
                                 <button
                                     onClick={handleAnalyze}
-                                    disabled={!lichessUsername || timeControls.length === 0 || playlistsSpace.isFull}
+                                    disabled={!lichessUsername || timeControls.length === 0 || saveStatus.type === 'loading' || totalPuzzlesCount >= 70}
                                     className="mt-10 w-full py-3.5 bg-chess-accent hover:bg-chess-accent-hover disabled:bg-white/5 disabled:to-white/5 disabled:text-white/20 text-white text-sm rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-md shadow-chess-accent/15 disabled:shadow-none hover:-translate-y-0.5 disabled:cursor-not-allowed cursor-pointer active:scale-[0.98] duration-200"
                                 >
                                     <Play size={16} fill="currentColor" />
-                                    {playlistsSpace.isFull ? 'Scanning Disabled (Capacity Reached)' : 'Scan & Analyze Games'}
+                                    {saveStatus.type === 'loading' ? 'Manual Import Active...' : totalPuzzlesCount >= 70 ? 'Repertoire Full (70/70)' : 'Scan & Analyze Games'}
                                 </button>
                             </div>
                         )}
@@ -652,7 +660,7 @@ export default function AnalysisBoard() {
                         )}
                     </div>
 
-                    {/* RIGHT COLUMN: Manual Import (PGN / FEN) */}
+                    {/* RIGHT COLUMN: Manual Import (PGN) */}
                     <div className="w-full lg:w-[400px] shrink-0">
                         <div className="bg-chess-panel border border-white/5 rounded-3xl p-6 sm:p-7 shadow-xl flex flex-col relative">
                             <div className="absolute top-0 right-0 w-48 h-48 bg-chess-accent/[0.02] rounded-full blur-2xl pointer-events-none" />
@@ -661,32 +669,6 @@ export default function AnalysisBoard() {
                                 <Upload size={18} className="text-chess-accent" />
                                 <span>Manual Position Import</span>
                             </h3>
-
-                            {/* FEN/PGN mini-tab switcher */}
-                            <div className="flex p-1 bg-black/25 border border-white/5 rounded-xl mb-5">
-                                <button
-                                    type="button"
-                                    onClick={() => { setImportTab('fen'); setSaveStatus({ type: '', text: '' }); }}
-                                    className={`flex-1 py-2 font-bold text-xs flex items-center justify-center gap-1.5 rounded-lg transition-all ${
-                                        importTab === 'fen' 
-                                            ? 'bg-chess-accent text-white shadow'
-                                            : 'text-chess-text-secondary hover:text-white'
-                                    }`}
-                                >
-                                    <Search size={14} /> FEN String
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => { setImportTab('pgn'); setSaveStatus({ type: '', text: '' }); }}
-                                    className={`flex-1 py-2 font-bold text-xs flex items-center justify-center gap-1.5 rounded-lg transition-all ${
-                                        importTab === 'pgn' 
-                                            ? 'bg-chess-accent text-white shadow'
-                                            : 'text-chess-text-secondary hover:text-white'
-                                    }`}
-                                >
-                                    <FileText size={14} /> Full PGN
-                                </button>
-                            </div>
 
                             {/* Status Notification */}
                             {saveStatus.text && (
@@ -703,211 +685,95 @@ export default function AnalysisBoard() {
 
                             {/* Input Form Fields */}
                             <div className="space-y-4">
-                                {importTab === 'fen' ? (
-                                    <div className="space-y-1.5">
-                                        <label htmlFor="fenInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">FEN String</label>
-                                        <input
-                                            id="fenInput"
-                                            type="text"
-                                            value={fenInput}
-                                            onChange={(e) => setFenInput(e.target.value)}
-                                            placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-                                            className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-3 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-all font-mono"
-                                        />
-                                    </div>
-                                ) : (
-                                    <div className="space-y-1.5">
-                                        <label htmlFor="pgnInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">PGN Text</label>
-                                        <textarea
-                                            id="pgnInput"
-                                            value={pgnInput}
-                                            onChange={(e) => setPgnInput(e.target.value)}
-                                            placeholder="1. e4 e5 2. Nf3 Nc6..."
-                                            className="w-full h-24 bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs p-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-all resize-none scrollbar-thin font-mono"
-                                        />
-                                    </div>
-                                )}
-
                                 <div className="space-y-1.5">
-                                    <label htmlFor="puzzleName" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Puzzle Title</label>
-                                    <input
-                                        id="puzzleName"
-                                        type="text"
-                                        value={savePuzzleName}
-                                        onChange={(e) => setSavePuzzleName(e.target.value)}
-                                        placeholder="e.g. Pin on the knight"
-                                        className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
-                                    />
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label htmlFor="puzzleOpening" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Opening Name / Tag</label>
-                                    <input
-                                        id="puzzleOpening"
-                                        type="text"
-                                        value={savePuzzleOpening}
-                                        onChange={(e) => setSavePuzzleOpening(e.target.value)}
-                                        placeholder="e.g. Caro-Kann Defense"
-                                        className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
+                                    <label htmlFor="pgnInput" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">PGN Text</label>
+                                    <textarea
+                                        id="pgnInput"
+                                        value={pgnInput}
+                                        onChange={(e) => setPgnInput(e.target.value)}
+                                        placeholder="1. e4 e5 2. Nf3 Nc6..."
+                                        className="w-full h-24 bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs p-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-all resize-none scrollbar-thin font-mono"
                                     />
                                 </div>
 
                                 <div className="space-y-2">
-                                    <label className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Side to Move</label>
-                                    <div className="grid grid-cols-2 gap-3 bg-black/20 p-1.5 rounded-xl border border-white/5">
+                                    <label className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Side to Analyze</label>
+                                    <div className="grid grid-cols-3 gap-1 bg-black/20 p-1.5 rounded-xl border border-white/5">
                                         <button
                                             type="button"
                                             onClick={() => setSavePuzzleColor('white')}
-                                            className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                                            title="White to Play"
+                                            className={`py-3 px-1 rounded-xl transition-all flex items-center justify-center cursor-pointer ${
                                                 savePuzzleColor === 'white'
-                                                    ? 'bg-chess-accent text-white shadow font-bold'
+                                                    ? 'bg-chess-accent text-white shadow'
                                                     : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
                                             }`}
                                         >
                                             <img
                                                 src={getPieceImageUrl(pieceSet, 'w', 'k')}
                                                 alt="White King"
-                                                className="w-6 h-6 object-contain drop-shadow"
+                                                className="w-9 h-9 object-contain drop-shadow"
                                             />
-                                            <span>White to Play</span>
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => setSavePuzzleColor('black')}
-                                            className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                                            title="Black to Play"
+                                            className={`py-3 px-1 rounded-xl transition-all flex items-center justify-center cursor-pointer ${
                                                 savePuzzleColor === 'black'
-                                                    ? 'bg-chess-accent text-white shadow font-bold'
+                                                    ? 'bg-chess-accent text-white shadow'
                                                     : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
                                             }`}
                                         >
                                             <img
                                                 src={getPieceImageUrl(pieceSet, 'b', 'k')}
                                                 alt="Black King"
-                                                className="w-6 h-6 object-contain drop-shadow"
+                                                className="w-9 h-9 object-contain drop-shadow"
                                             />
-                                            <span>Black to Play</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSavePuzzleColor('both')}
+                                            title="Both Sides"
+                                            className={`py-3 px-1 rounded-xl transition-all flex items-center justify-center cursor-pointer ${
+                                                savePuzzleColor === 'both'
+                                                    ? 'bg-chess-accent text-white shadow'
+                                                    : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
+                                            }`}
+                                        >
+                                            <div className="flex items-center -space-x-2 shrink-0">
+                                                <img
+                                                    src={getPieceImageUrl(pieceSet, 'w', 'k')}
+                                                    alt="White King"
+                                                    className="w-7 h-7 object-contain drop-shadow relative z-10"
+                                                />
+                                                <img
+                                                    src={getPieceImageUrl(pieceSet, 'b', 'k')}
+                                                    alt="Black King"
+                                                    className="w-7 h-7 object-contain drop-shadow"
+                                                />
+                                            </div>
                                         </button>
                                     </div>
                                 </div>
-
-                                <div className="space-y-2 relative">
-                                    <label className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">Add to Playlist</label>
-                                    
-                                    <button
-                                        type="button"
-                                        onClick={() => setIsPlaylistDropdownOpen(!isPlaylistDropdownOpen)}
-                                        className="w-full bg-chess-bg border border-white/10 hover:border-chess-accent/30 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white flex justify-between items-center transition-all cursor-pointer"
-                                    >
-                                        <div className="flex items-center gap-2">
-                                            {savePlaylistIdx === 'fav' ? (
-                                                <span className="text-yellow-400">⭐</span>
-                                            ) : savePlaylistIdx === 'create_new' ? (
-                                                <span className="text-chess-accent">➕</span>
-                                            ) : (
-                                                <Folder size={14} className="text-chess-accent" />
-                                            )}
-                                            <span className="font-semibold text-chess-text-primary text-left">
-                                                {savePlaylistIdx === 'fav' ? 'Starred / Favorites' : (savePlaylistIdx === 'create_new' ? 'Create New Playlist...' : (selectedPlaylist?.title || 'Select Playlist'))}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center gap-1.5">
-                                            {savePlaylistIdx !== 'fav' && savePlaylistIdx !== 'create_new' && selectedPlaylist && (
-                                                <span className="text-[10px] text-chess-text-secondary">({selectedPlaylist.total}/20)</span>
-                                            )}
-                                            <ChevronDown size={14} className={`text-chess-text-secondary transition-transform duration-200 ${isPlaylistDropdownOpen ? 'rotate-180' : ''}`} />
-                                        </div>
-                                    </button>
-
-                                    {isPlaylistDropdownOpen && (
-                                        <>
-                                            <div className="fixed inset-0 z-10" onClick={() => setIsPlaylistDropdownOpen(false)} />
-                                            <div className="absolute z-20 mt-1 w-full bg-chess-panel border border-white/10 rounded-xl shadow-2xl p-1.5 space-y-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                                                {availablePlaylists.map(pl => (
-                                                    <button
-                                                        key={pl.index}
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setSavePlaylistIdx(pl.index.toString());
-                                                            setIsPlaylistDropdownOpen(false);
-                                                        }}
-                                                        className={`w-full py-2 px-2.5 text-left text-xs font-semibold rounded-lg transition-all flex justify-between items-center cursor-pointer ${
-                                                            savePlaylistIdx === pl.index.toString()
-                                                                ? 'bg-chess-accent/15 text-white'
-                                                                : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
-                                                        }`}
-                                                    >
-                                                        <div className="flex items-center gap-2">
-                                                            <Folder size={14} className="opacity-70 text-chess-accent" />
-                                                            <span>{pl.title}</span>
-                                                        </div>
-                                                        <span className="text-[10px] opacity-65">({pl.total}/20)</span>
-                                                    </button>
-                                                ))}
-                                                {totalPlaylistsCount < 3 && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            setSavePlaylistIdx('create_new');
-                                                            setIsPlaylistDropdownOpen(false);
-                                                        }}
-                                                        className={`w-full py-2 px-2.5 text-left text-xs font-semibold rounded-lg transition-all flex justify-between items-center cursor-pointer ${
-                                                            savePlaylistIdx === 'create_new'
-                                                                ? 'bg-chess-accent/15 text-white font-bold'
-                                                                : 'text-chess-text-secondary hover:text-white hover:bg-white/5'
-                                                        }`}
-                                                    >
-                                                        <div className="flex items-center gap-2 text-chess-accent font-bold">
-                                                            <span>➕</span>
-                                                            <span>Create New Playlist...</span>
-                                                        </div>
-                                                    </button>
-                                                )}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setSavePlaylistIdx('fav');
-                                                        setIsPlaylistDropdownOpen(false);
-                                                    }}
-                                                    className={`w-full py-2 px-2.5 text-left text-xs font-semibold rounded-lg transition-all flex justify-between items-center cursor-pointer ${
-                                                        savePlaylistIdx === 'fav'
-                                                            ? 'bg-yellow-500/10 text-yellow-400 font-bold'
-                                                            : 'text-chess-text-secondary hover:text-yellow-400 hover:bg-yellow-500/5'
-                                                    }`}
-                                                >
-                                                    <div className="flex items-center gap-2">
-                                                        <span>⭐</span>
-                                                        <span>Starred / Favorites</span>
-                                                    </div>
-                                                    <span className="text-[10px] opacity-65">(Max 10)</span>
-                                                </button>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-
-                                {savePlaylistIdx === 'create_new' && (
-                                    <div className="space-y-1.5 animate-in slide-in-from-top-1 duration-200">
-                                        <label htmlFor="newPlaylistName" className="text-[10px] text-chess-text-secondary font-bold uppercase tracking-wider block">New Playlist Name</label>
-                                        <input
-                                            id="newPlaylistName"
-                                            type="text"
-                                            value={newPlaylistName}
-                                            onChange={(e) => setNewPlaylistName(e.target.value)}
-                                            placeholder="Enter playlist name..."
-                                            className="w-full bg-chess-bg border border-white/10 focus:border-chess-accent rounded-xl text-xs py-2.5 px-3 text-white placeholder:text-chess-text-secondary focus:outline-none transition-colors"
-                                        />
-                                    </div>
-                                )}
-
-
                             </div>
 
                             <button
-                                onClick={handleSavePuzzle}
-                                disabled={saveStatus.type === 'loading'}
-                                className="mt-6 w-full py-3.5 bg-chess-accent hover:bg-chess-accent-hover text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 transition-all hover:-translate-y-0.5 disabled:opacity-50"
+                                onClick={handleManualAnalyze}
+                                disabled={saveStatus.type === 'loading' || analyzing || totalPuzzlesCount >= 70}
+                                className="mt-6 w-full py-3.5 bg-chess-accent hover:bg-chess-accent-hover text-white text-sm font-bold rounded-xl flex items-center justify-center gap-2 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             >
-                                <Save size={16} /> Save to Playlist
+                                {analyzing ? (
+                                    <>
+                                        <Loader2 size={16} className="animate-spin" />
+                                        Analyzing Game...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Brain size={16} />
+                                        Start Analysis
+                                    </>
+                                )}
                             </button>
                         </div>
                     </div>
@@ -1000,6 +866,16 @@ export default function AnalysisBoard() {
                         </div>
                     </div>
                 )}
+
+                {/* Themed Alert/Confirm Modal */}
+                <ThemedDialog
+                    open={confirmConfig.show}
+                    title={confirmConfig.title}
+                    message={confirmConfig.message}
+                    type={confirmConfig.type}
+                    onConfirm={confirmConfig.onConfirm}
+                    onCancel={confirmConfig.onCancel}
+                />
 
             </div>
         </DashboardLayout>
