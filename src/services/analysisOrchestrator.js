@@ -11,7 +11,7 @@
  */
 
 import { getUserProfile } from './userService';
-import { isGameProcessed, markGameProcessed, savePendingPuzzles, saveNewPuzzles, getUserPuzzleStats } from './puzzleService';
+import { isGameProcessed, markGameProcessed, savePendingPuzzles, saveNewPuzzles, getUserPuzzleStats, processScanDuplicates, normalizeFen } from './puzzleService';
 import { lichessApi } from '../lib/lichessApi';
 import { gameAnalyzer } from '../lib/gameAnalyzer';
 import { engineService } from './engineService';
@@ -149,9 +149,24 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
                         gameUrl: `https://lichess.org/${gameId}`
                     }));
 
-                    allPuzzles.push(...puzzlesWithGameId);
-                    puzzlesCount += puzzlesToTake.length;
-                    results.puzzlesGenerated += puzzlesToTake.length;
+                    // Scenario 2: Deduplicate against the local in-progress queue (allPuzzles)
+                    const uniqueToGame = [];
+                    puzzlesWithGameId.forEach(puzzle => {
+                        const normFen = normalizeFen(puzzle.fen);
+                        const localDup = allPuzzles.find(p => normalizeFen(p.fen) === normFen);
+                        if (localDup) {
+                            localDup.recurrentCount = (localDup.recurrentCount || 0) + 1;
+                        } else {
+                            uniqueToGame.push(puzzle);
+                        }
+                    });
+
+                    // Silently resolve duplicates in background without putting them in wizard queue
+                    const uniqueNewPuzzles = await processScanDuplicates(userId, uniqueToGame);
+
+                    allPuzzles.push(...uniqueNewPuzzles);
+                    puzzlesCount += uniqueNewPuzzles.length;
+                    results.puzzlesGenerated += uniqueNewPuzzles.length;
                 }
 
                 results.gamesAnalyzed++;
@@ -256,11 +271,30 @@ export async function quickAnalyze(userId, onProgress = () => { }) {
                 gameUrl: `https://lichess.org/${gameId}`
             }));
 
-            results.puzzlesGenerated = puzzles.length;
+            // Scenario 2: Deduplicate within the local game queue
+            const uniqueToGame = [];
+            puzzlesWithGameId.forEach(puzzle => {
+                const normFen = normalizeFen(puzzle.fen);
+                const localDup = uniqueToGame.find(p => normalizeFen(p.fen) === normFen);
+                if (localDup) {
+                    localDup.recurrentCount = (localDup.recurrentCount || 0) + 1;
+                } else {
+                    uniqueToGame.push(puzzle);
+                }
+            });
+
+            // Silently resolve duplicates in background
+            const uniqueNewPuzzles = await processScanDuplicates(userId, uniqueToGame);
+
+            results.puzzlesGenerated = uniqueNewPuzzles.length;
             results.gamesAnalyzed = 1;
 
-            onProgress({ stage: 'Saving puzzles...', progress: 80 });
-            await saveNewPuzzles(userId, puzzlesWithGameId);
+            if (uniqueNewPuzzles.length > 0) {
+                onProgress({ stage: 'Saving puzzles...', progress: 80 });
+                await saveNewPuzzles(userId, uniqueNewPuzzles);
+            } else {
+                onProgress({ stage: 'Position already in Repertoire. Weight boosted silently.', progress: 100 });
+            }
             await markGameProcessed(userId, gameId, puzzles.length);
         }
 

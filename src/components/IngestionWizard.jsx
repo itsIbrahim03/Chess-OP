@@ -261,7 +261,7 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
         setSaving(true);
         try {
             // Save instantly and remove from pending Scan list in Firestore
-            const updatedPuzzles = await approvePendingPuzzle(userId, puzzleToSave, puzzles, 0);
+            const { puzzles: updatedPuzzles } = await approvePendingPuzzle(userId, puzzleToSave, puzzles, 0);
 
             // Dispatch global event to notify active pages (like AnalysisBoard) to update counts
             window.dispatchEvent(new CustomEvent('repertoire-updated'));

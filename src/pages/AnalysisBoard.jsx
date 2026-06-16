@@ -9,13 +9,14 @@ import {
     Zap, Flame, Clock, Calendar, Hash, Save, Upload, FileText, Search, Play,
     ChevronDown, Folder, AlertTriangle, Loader2
 } from 'lucide-react';
-import { getUserPlaylists, getPendingPuzzles, clearPendingPuzzles, getUserPuzzleStats, savePendingPuzzles } from '../services/puzzleService';
+import { getUserPlaylists, getPendingPuzzles, clearPendingPuzzles, getUserPuzzleStats, savePendingPuzzles, processScanDuplicates, normalizeFen } from '../services/puzzleService';
 import { backgroundAnalysisService } from '../services/backgroundAnalysisService';
 import { getPieceImageUrl } from '../lib/pieceSets';
 import { engineService } from '../services/engineService';
 import { OpeningDetector } from '../lib/openingDetector';
 import { gameAnalyzer } from '../lib/gameAnalyzer';
 import ThemedDialog from '../components/ThemedDialog';
+import Toast from '../components/Toast';
 
 export default function AnalysisBoard() {
     const { user } = useAuth();
@@ -39,6 +40,10 @@ export default function AnalysisBoard() {
     const [savePuzzleColor, setSavePuzzleColor] = useState('white');
     const [saveStatus, setSaveStatus] = useState({ type: '', text: '' });
     const [pieceSet, setPieceSet] = useState('cburnett');
+
+    // Toast Notification state
+    const [toastMessage, setToastMessage] = useState(null);
+    const [toastType, setToastType] = useState('success');
 
     // Playlists capacity states
     const [playlistsSpace, setPlaylistsSpace] = useState({ total: 0, isFull: false });
@@ -269,19 +274,34 @@ export default function AnalysisBoard() {
                     'info'
                 );
             } else {
-                setSaveStatus({ type: 'success', text: `Analysis complete! Found ${puzzles.length} blunder puzzle(s).` });
+                // Scenario 2: Deduplicate within the local game queue
+                const uniqueToGame = [];
+                puzzles.forEach(puzzle => {
+                    const normFen = normalizeFen(puzzle.fen);
+                    const localDup = uniqueToGame.find(p => normalizeFen(p.fen) === normFen);
+                    if (localDup) {
+                        localDup.recurrentCount = (localDup.recurrentCount || 0) + 1;
+                    } else {
+                        uniqueToGame.push(puzzle);
+                    }
+                });
+
+                // Silently resolve duplicate puzzles in background (Scenario 3 / Scenario 1)
+                const uniqueNewPuzzles = await processScanDuplicates(user.uid, uniqueToGame);
                 
-                // Save to Firestore pending Scan
-                await savePendingPuzzles(user.uid, puzzles);
-                
-                // Refresh parent counts and trigger wizard opening
-                window.dispatchEvent(new CustomEvent('repertoire-updated'));
-                
-                // Clear input
-                setPgnInput('');
-                
-                // Redirect / Open Ingestion Wizard
-                navigate('?review=true');
+                if (uniqueNewPuzzles.length === 0) {
+                    setSaveStatus({ type: 'success', text: 'Position already in Repertoire. puzzle weight boosted!' });
+                    setToastMessage('Position already in Repertoire. Puzzle weight boosted!');
+                    setToastType('success');
+                    window.dispatchEvent(new CustomEvent('repertoire-updated'));
+                    setPgnInput('');
+                } else {
+                    setSaveStatus({ type: 'success', text: `Analysis complete! Found ${uniqueNewPuzzles.length} blunder puzzle(s).` });
+                    await savePendingPuzzles(user.uid, uniqueNewPuzzles);
+                    window.dispatchEvent(new CustomEvent('repertoire-updated'));
+                    setPgnInput('');
+                    navigate('?review=true');
+                }
             }
         } catch (err) {
             console.error('Manual game analysis failed:', err);
@@ -649,7 +669,7 @@ export default function AnalysisBoard() {
                                     </li>
                                     <li className="flex items-start gap-2">
                                         <span className="text-chess-accent select-none mt-0.5">•</span>
-                                        Stockfish runs client-side to find positions where you made a mistake (≥ 1.0 ELO evaluation loss).
+                                        Stockfish runs client-side to find positions where you made a mistake (≥ 1.0 centipawn evaluation loss).
                                     </li>
                                     <li className="flex items-start gap-2">
                                         <span className="text-chess-accent select-none mt-0.5">•</span>
@@ -876,6 +896,15 @@ export default function AnalysisBoard() {
                     onConfirm={confirmConfig.onConfirm}
                     onCancel={confirmConfig.onCancel}
                 />
+
+                {/* Toast Notification */}
+                {toastMessage && (
+                    <Toast
+                        message={toastMessage}
+                        type={toastType}
+                        onClose={() => setToastMessage(null)}
+                    />
+                )}
 
             </div>
         </DashboardLayout>

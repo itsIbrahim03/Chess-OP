@@ -34,6 +34,16 @@ import {
  * The gameAnalyzer originally output openingName/tags/playerColor,
  * but all UI consumers expect opening/theme/userColor.
  */
+export function normalizeFen(fen) {
+    if (!fen) return '';
+    return fen.trim().split(/\s+/).slice(0, 4).join(' ');
+}
+
+/**
+ * Normalize puzzle field names for backward compatibility.
+ * The gameAnalyzer originally output openingName/tags/playerColor,
+ * but all UI consumers expect opening/theme/userColor.
+ */
 function normalizePuzzle(data, docId) {
     return {
         ...data,
@@ -41,7 +51,17 @@ function normalizePuzzle(data, docId) {
         opening: data.opening || data.openingName || 'Unknown Opening',
         theme: data.theme || (Array.isArray(data.tags) ? data.tags[0] : null) || 'Opening Blunder',
         userColor: data.userColor || data.playerColor || 'white',
-        playlistIndex: data.playlistIndex !== undefined ? data.playlistIndex : 0
+        playlistIndex: data.playlistIndex !== undefined ? data.playlistIndex : 0,
+        srsLevel: data.srsLevel !== undefined ? data.srsLevel : 0,
+        recurrentCount: data.recurrentCount !== undefined ? data.recurrentCount : 0,
+        nextDueDate: data.nextDueDate || null,
+        reviewState: data.reviewState || {
+            isSolved: false,
+            attempts: 0,
+            lastAttempt: null,
+            successCount: 0,
+            failCount: 0
+        }
     };
 }
 
@@ -72,55 +92,81 @@ export async function saveNewPuzzles(userId, newPuzzles) {
         throw new Error('No puzzles to save');
     }
 
-    const stats = await getUserPuzzleStats(userId);
-    if (stats.total + newPuzzles.length > 70) {
-        throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
-    }
+    // Load existing puzzles to check duplicates
+    const q = query(
+        collection(db, 'puzzles'),
+        where('userId', '==', userId)
+    );
+    const snapshot = await getDocs(q);
+    const existing = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
+    let currentTotal = existing.length;
     const saveBatch = writeBatch(db);
 
     newPuzzles.forEach(puzzle => {
-        const puzzleRef = doc(collection(db, 'puzzles'));
-        // Strip the custom `id` field from gameAnalyzer — Firestore will assign its own doc ID.
-        // Keeping it would cause all map functions to return the wrong ID.
-        const { id: _customId, ...puzzleData } = puzzle;
+        const normFen = normalizeFen(puzzle.fen);
+        const duplicate = existing.find(p => normalizeFen(p.fen) === normFen);
 
-        // ── Normalize field names ──────────────────────────────────────
-        const opening = puzzleData.openingName || puzzleData.opening || 'Unknown Opening';
-        const theme = Array.isArray(puzzleData.tags)
-            ? puzzleData.tags[0] || 'Opening Blunder'
-            : (puzzleData.theme || 'Opening Blunder');
-        const userColor = puzzleData.playerColor || puzzleData.userColor || 'white';
-
-        // Remove the raw analyzer fields so we don't store duplicates
-        delete puzzleData.openingName;
-        delete puzzleData.tags;
-        delete puzzleData.playerColor;
-
-        saveBatch.set(puzzleRef, {
-            ...puzzleData,
-            opening,
-            theme,
-            userColor,
-            type: 'opening_blunder',
-            userId,
-            isFavorite: false,
-            playlistIndex: 0, // Default to Playlist 1
-            status: 'new',
-            createdAt: serverTimestamp(),
-            reviewState: {
-                isSolved: false,
-                attempts: 0,
-                lastAttempt: null,
-                successCount: 0,
-                failCount: 0
+        if (duplicate) {
+            const puzzleRef = doc(db, 'puzzles', duplicate.id);
+            saveBatch.update(puzzleRef, {
+                srsLevel: 0,
+                nextDueDate: serverTimestamp(),
+                status: 'active',
+                lastResult: 'fail',
+                recurrentCount: increment(1),
+                'reviewState.failCount': increment(1),
+                'reviewState.attempts': increment(1),
+                'reviewState.isSolved': false,
+                lastAttemptedAt: serverTimestamp()
+            });
+        } else {
+            // Check capacity limit only for unique new puzzles
+            if (currentTotal >= 70) {
+                throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
             }
-        });
+            currentTotal++;
+
+            const puzzleRef = doc(collection(db, 'puzzles'));
+            const { id: _customId, ...puzzleData } = puzzle;
+
+            const opening = puzzleData.openingName || puzzleData.opening || 'Unknown Opening';
+            const theme = Array.isArray(puzzleData.tags)
+                ? puzzleData.tags[0] || 'Opening Blunder'
+                : (puzzleData.theme || 'Opening Blunder');
+            const userColor = puzzleData.playerColor || puzzleData.userColor || 'white';
+
+            delete puzzleData.openingName;
+            delete puzzleData.tags;
+            delete puzzleData.playerColor;
+
+            saveBatch.set(puzzleRef, {
+                ...puzzleData,
+                opening,
+                theme,
+                userColor,
+                type: 'opening_blunder',
+                userId,
+                isFavorite: false,
+                playlistIndex: 0,
+                status: 'new',
+                createdAt: serverTimestamp(),
+                srsLevel: 0,
+                nextDueDate: serverTimestamp(),
+                recurrentCount: 0,
+                normalizedFen: normFen,
+                reviewState: {
+                    isSolved: false,
+                    attempts: 0,
+                    lastAttempt: null,
+                    successCount: 0,
+                    failCount: 0
+                }
+            });
+        }
     });
 
     await saveBatch.commit();
-
-    // Enforce limits and rotate oldest to next playlists (max 20 each)
     await enforcePlaylistLimits(userId);
 
     // Update lastScan and stats in user profile
@@ -130,7 +176,6 @@ export async function saveNewPuzzles(userId, newPuzzles) {
         'stats.totalGamesAnalyzed': increment(1)
     });
 
-    // Get final count
     const finalSnapshot = await getDocs(query(
         collection(db, 'puzzles'),
         where('userId', '==', userId),
@@ -298,25 +343,98 @@ export async function toggleFavorite(userId, puzzleId, isFavorite) {
 
 
 
-/**
- * Update puzzle review state after attempt.
- * Uses setDoc with merge so it works even if the document doesn't exist in cache.
- */
 export async function updatePuzzleReview(userId, puzzleId, success, timeTaken) {
     const puzzleRef = doc(db, 'puzzles', puzzleId);
 
-    // Use updateDoc so we don't create "ghost" documents if the puzzle doesn't exist
+    // Retrieve current puzzle document to get srsLevel
+    const snap = await getDoc(puzzleRef);
+    if (!snap.exists()) {
+        throw new Error('Puzzle not found');
+    }
+    const data = snap.data();
+    const currentSrsLevel = data.srsLevel !== undefined ? data.srsLevel : 0;
+    
+    let newSrsLevel = 0;
+    let nextDueDate = new Date(); // default to now
+    let status = 'active';
+    
+    const intervals = [1, 3, 7, 14, 30, 30]; // Level 0 to 5 intervals in days
+    
+    if (success) {
+        newSrsLevel = Math.min(5, currentSrsLevel + 1);
+        const days = intervals[newSrsLevel];
+        nextDueDate.setDate(nextDueDate.getDate() + days);
+        status = newSrsLevel === 5 ? 'mastered' : 'solved';
+    } else {
+        newSrsLevel = 0;
+        nextDueDate.setDate(nextDueDate.getDate() + 1); // 1 day
+        status = 'active';
+    }
+    
+    // Calculate XP updates
+    let xpAwarded = 10; // Base solve XP
+    if (success) {
+        if (newSrsLevel > currentSrsLevel) {
+            xpAwarded += 20; // Level promotion bonus
+        }
+        if (newSrsLevel === 5 && currentSrsLevel < 5) {
+            xpAwarded += 50; // Mastery bonus
+        }
+    } else {
+        xpAwarded = 0; // No XP on failure
+    }
+    
+    // Append to attempt history (limit to 5)
+    const historyEntry = {
+        timestamp: new Date(),
+        result: success ? 'success' : 'fail'
+    };
+    let history = Array.isArray(data.history) ? [...data.history] : [];
+    history.push(historyEntry);
+    if (history.length > 5) {
+        history = history.slice(history.length - 5);
+    }
+
     await updateDoc(puzzleRef, {
-        'reviewState.isSolved': success ? true : false,
+        'reviewState.isSolved': success,
         'reviewState.attempts': increment(1),
         'reviewState.lastAttempt': serverTimestamp(),
         'reviewState.successCount': success ? increment(1) : increment(0),
         'reviewState.failCount': success ? increment(0) : increment(1),
-        status: success ? 'solved' : 'active',
+        srsLevel: newSrsLevel,
+        nextDueDate: nextDueDate,
+        status: status,
         lastAttemptedAt: serverTimestamp(),
-        lastResult: success ? 'success' : 'fail'
+        lastResult: success ? 'success' : 'fail',
+        history: history
     });
 
+    // Update user document stats & XP
+    if (xpAwarded > 0 || success) {
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+            const userData = userSnap.data();
+            const currentXp = userData.stats?.xp !== undefined ? userData.stats.xp : 0;
+            const newXp = currentXp + xpAwarded;
+            const newLevel = Math.floor(newXp / 100) + 1;
+            
+            const currentTotalReviews = userData.stats?.totalReviews !== undefined ? userData.stats.totalReviews : 0;
+            const currentCorrectReviews = userData.stats?.totalCorrectReviews !== undefined ? userData.stats.totalCorrectReviews : 0;
+            
+            const newTotalReviews = currentTotalReviews + 1;
+            const newCorrectReviews = currentCorrectReviews + (success ? 1 : 0);
+            const reviewAccuracy = Math.round((newCorrectReviews / newTotalReviews) * 100);
+            
+            await updateDoc(userRef, {
+                'stats.xp': newXp,
+                'stats.level': newLevel,
+                'stats.totalReviews': newTotalReviews,
+                'stats.totalCorrectReviews': newCorrectReviews,
+                'stats.reviewAccuracy': reviewAccuracy
+            });
+        }
+    }
 
     // Log activity (non-fatal)
     try {
@@ -325,8 +443,7 @@ export async function updatePuzzleReview(userId, puzzleId, success, timeTaken) {
         console.warn('logPuzzleAttempt failed (non-fatal):', e);
     }
 
-    return { status: success ? 'solved' : 'active' };
-
+    return { status };
 }
 
 /**
@@ -450,13 +567,6 @@ export async function deletePuzzle(userId, puzzleId) {
     // Delete puzzle
     await deleteDoc(puzzleRef);
 }
-/**
- * Get the next puzzle for training
- * Prioritizes:
- * 1. Active puzzles (failed previously)
- * 2. New puzzles
- * 3. Review puzzles (backlog)
- */
 export async function getNextPuzzle(userId, excludeIds = []) {
     const excludes = Array.isArray(excludeIds) ? excludeIds : (excludeIds ? [excludeIds] : []);
 
@@ -469,7 +579,22 @@ export async function getNextPuzzle(userId, excludeIds = []) {
         const snapshot = await getDocs(q);
         const allPuzzles = snapshot.docs.map(d => normalizePuzzle(d.data(), d.id));
 
-        // 1. Try to find an active puzzle (failed previously)
+        const now = new Date();
+
+        // 1. Try to find due puzzles (nextDueDate <= now)
+        let dueCandidates = allPuzzles.filter(p => {
+            if (excludes.includes(p.id)) return false;
+            if (!p.nextDueDate) return true; // Treat as due if no date
+            const dueMillis = p.nextDueDate.toMillis?.() || p.nextDueDate.seconds * 1000 || new Date(p.nextDueDate).getTime();
+            return dueMillis <= now.getTime();
+        });
+        
+        if (dueCandidates.length > 0) {
+            // Shuffle and return one
+            return dueCandidates[Math.floor(Math.random() * dueCandidates.length)];
+        }
+
+        // 2. Try to find an active puzzle (failed previously)
         let activeCandidates = allPuzzles.filter(p => p.status === 'active' && !excludes.includes(p.id));
         if (activeCandidates.length > 0) {
             // Sort by reviewState.lastAttempt asc (oldest attempts first)
@@ -482,21 +607,21 @@ export async function getNextPuzzle(userId, excludeIds = []) {
             return top50[Math.floor(Math.random() * top50.length)];
         }
 
-        // 2. Try to find a new puzzle
+        // 3. Try to find a new puzzle
         let newCandidates = allPuzzles.filter(p => p.status === 'new' && !excludes.includes(p.id));
         if (newCandidates.length > 0) {
             // Sort by createdAt desc (newest first)
             newCandidates.sort((a, b) => {
                 const aTime = a.createdAt?.toMillis?.() || 0;
                 const bTime = b.createdAt?.toMillis?.() || 0;
-                return bTime - aTime;
+                return aTime - bTime;
             });
             const top50 = newCandidates.slice(0, 50);
             return top50[Math.floor(Math.random() * top50.length)];
         }
 
-        // 3. Fall back to solved puzzles so the user can review them and train even if all are solved
-        let solvedCandidates = allPuzzles.filter(p => p.status === 'solved' && !excludes.includes(p.id));
+        // 4. Fall back to solved/mastered puzzles so the user can review them and train even if all are solved
+        let solvedCandidates = allPuzzles.filter(p => (p.status === 'solved' || p.status === 'mastered') && !excludes.includes(p.id));
         if (solvedCandidates.length > 0) {
             // Sort by lastAttemptedAt asc (least recently trained first)
             solvedCandidates.sort((a, b) => {
@@ -596,12 +721,15 @@ export async function getPuzzlesGroupedByOpening(userId) {
                 const bTime = b.createdAt?.toMillis?.() || 0;
                 return bTime - aTime;
             });
+            const totalSrsSum = g.puzzles.reduce((sum, p) => sum + (p.srsLevel || 0), 0);
+            const maxSrsSum = g.puzzles.length * 5;
+            const progress = maxSrsSum > 0 ? Math.round((totalSrsSum / maxSrsSum) * 100) : 0;
             return {
                 ...g,
-                progress: g.total > 0 ? Math.round((g.solved / g.total) * 100) : 0,
-                mastery: g.mastered >= g.total * 0.8 ? 'Expert'
-                       : g.mastered >= g.total * 0.5 ? 'Advanced'
-                       : g.solved  >= g.total * 0.5 ? 'Intermediate'
+                progress,
+                mastery: progress >= 80 ? 'Expert'
+                       : progress >= 50 ? 'Advanced'
+                       : progress >= 30 ? 'Intermediate'
                        : 'Novice'
             };
         }).sort((a, b) => b.total - a.total);
@@ -783,12 +911,15 @@ export async function getUserPlaylists(userId) {
                 const bTime = b.createdAt?.toMillis?.() || 0;
                 return bTime - aTime;
             });
+            const totalSrsSum = g.puzzles.reduce((sum, p) => sum + (p.srsLevel || 0), 0);
+            const maxSrsSum = g.puzzles.length * 5;
+            const progress = maxSrsSum > 0 ? Math.round((totalSrsSum / maxSrsSum) * 100) : 0;
             return {
                 ...g,
-                progress: g.total > 0 ? Math.round((g.solved / g.total) * 100) : 0,
-                mastery: g.mastered >= g.total * 0.8 ? 'Expert'
-                       : g.mastered >= g.total * 0.5 ? 'Advanced'
-                       : g.solved  >= g.total * 0.5 ? 'Intermediate'
+                progress,
+                mastery: progress >= 80 ? 'Expert'
+                       : progress >= 50 ? 'Advanced'
+                       : progress >= 30 ? 'Intermediate'
                        : 'Novice'
             };
         });
@@ -1020,18 +1151,43 @@ export async function clearPlaylist(userId, playlistIndex) {
  * @param {Object} puzzle - Puzzle data (fen, correctMove, customName, opening, userColor, isFavorite)
  */
 export async function saveCustomPuzzle(userId, puzzle) {
-    const stats = await getUserPuzzleStats(userId);
-    if (stats.total >= 70) {
+    const q = query(
+        collection(db, 'puzzles'),
+        where('userId', '==', userId)
+    );
+    const snapshot = await getDocs(q);
+    const existing = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    const normFen = normalizeFen(puzzle.fen);
+    const duplicate = existing.find(p => normalizeFen(p.fen) === normFen);
+
+    if (duplicate) {
+        const puzzleRef = doc(db, 'puzzles', duplicate.id);
+        await updateDoc(puzzleRef, {
+            srsLevel: 0,
+            nextDueDate: serverTimestamp(),
+            status: 'active',
+            lastResult: 'fail',
+            recurrentCount: increment(1),
+            'reviewState.failCount': increment(1),
+            'reviewState.attempts': increment(1),
+            'reviewState.isSolved': false,
+            lastAttemptedAt: serverTimestamp()
+        });
+        return { duplicate: true, id: duplicate.id };
+    }
+
+    if (existing.length >= 70) {
         throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
     }
     if (puzzle.isFavorite) {
-        const favorites = await getFavoritePuzzles(userId);
+        const favorites = existing.filter(p => p.isFavorite);
         if (favorites.length >= 10) {
             throw new Error('FAVORITES_LIMIT_EXCEEDED');
         }
     }
+
     const puzzleRef = doc(collection(db, 'puzzles'));
-    
     await setDoc(puzzleRef, {
         fen: puzzle.fen,
         correctMove: puzzle.correctMove,
@@ -1042,9 +1198,13 @@ export async function saveCustomPuzzle(userId, puzzle) {
         type: 'custom',
         userId,
         isFavorite: puzzle.isFavorite || false,
-        playlistIndex: puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0, // defaults to Playlist 1
+        playlistIndex: puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0,
         status: 'new',
         createdAt: serverTimestamp(),
+        srsLevel: 0,
+        nextDueDate: serverTimestamp(),
+        recurrentCount: 0,
+        normalizedFen: normFen,
         reviewState: {
             isSolved: false,
             attempts: 0,
@@ -1054,9 +1214,8 @@ export async function saveCustomPuzzle(userId, puzzle) {
         }
     });
 
-    // Enforce limits and rotate oldest to next playlists (max 20 each)
     await enforcePlaylistLimits(userId);
-    return puzzleRef.id;
+    return { duplicate: false, id: puzzleRef.id };
 }
 
 /**
@@ -1156,41 +1315,70 @@ export async function clearPendingPuzzles(userId) {
  * 3. Enforce sequential playlist limits.
  */
 export async function approvePendingPuzzle(userId, puzzleToSave, puzzlesList, indexToApprove) {
-    const stats = await getUserPuzzleStats(userId);
-    if (stats.total >= 70) {
-        throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
-    }
-    if (puzzleToSave.isFavorite) {
-        const favorites = await getFavoritePuzzles(userId);
-        if (favorites.length >= 10) {
-            throw new Error('FAVORITES_LIMIT_EXCEEDED');
-        }
-    }
-    const batch = writeBatch(db);
+    const q = query(
+        collection(db, 'puzzles'),
+        where('userId', '==', userId)
+    );
+    const snapshot = await getDocs(q);
+    const existing = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    const puzzleRef = doc(collection(db, 'puzzles'));
-    
-    batch.set(puzzleRef, {
-        fen: puzzleToSave.fen,
-        correctMove: puzzleToSave.correctMove,
-        customName: puzzleToSave.customName || 'Blunder Position',
-        opening: puzzleToSave.opening || puzzleToSave.openingName || 'Unknown Opening',
-        theme: puzzleToSave.theme || 'Blunder',
-        userColor: puzzleToSave.userColor || puzzleToSave.playerColor || 'white',
-        type: 'opening_blunder',
-        userId,
-        isFavorite: puzzleToSave.isFavorite || false,
-        playlistIndex: puzzleToSave.playlistIndex !== undefined ? puzzleToSave.playlistIndex : 0,
-        status: 'new',
-        createdAt: serverTimestamp(),
-        reviewState: {
-            isSolved: false,
-            attempts: 0,
-            lastAttempt: null,
-            successCount: 0,
-            failCount: 0
+    const normFen = normalizeFen(puzzleToSave.fen);
+    const duplicate = existing.find(p => normalizeFen(p.fen) === normFen);
+
+    const batch = writeBatch(db);
+    let isDuplicate = false;
+
+    if (duplicate) {
+        isDuplicate = true;
+        const puzzleRef = doc(db, 'puzzles', duplicate.id);
+        batch.update(puzzleRef, {
+            srsLevel: 0,
+            nextDueDate: serverTimestamp(),
+            status: 'active',
+            lastResult: 'fail',
+            recurrentCount: increment(1),
+            'reviewState.failCount': increment(1),
+            'reviewState.attempts': increment(1),
+            'reviewState.isSolved': false,
+            lastAttemptedAt: serverTimestamp()
+        });
+    } else {
+        if (existing.length >= 70) {
+            throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
         }
-    });
+        if (puzzleToSave.isFavorite) {
+            const favorites = existing.filter(p => p.isFavorite);
+            if (favorites.length >= 10) {
+                throw new Error('FAVORITES_LIMIT_EXCEEDED');
+            }
+        }
+        const puzzleRef = doc(collection(db, 'puzzles'));
+        batch.set(puzzleRef, {
+            fen: puzzleToSave.fen,
+            correctMove: puzzleToSave.correctMove,
+            customName: puzzleToSave.customName || 'Blunder Position',
+            opening: puzzleToSave.opening || puzzleToSave.openingName || 'Unknown Opening',
+            theme: puzzleToSave.theme || 'Blunder',
+            userColor: puzzleToSave.userColor || puzzleToSave.playerColor || 'white',
+            type: 'opening_blunder',
+            userId,
+            isFavorite: puzzleToSave.isFavorite || false,
+            playlistIndex: puzzleToSave.playlistIndex !== undefined ? puzzleToSave.playlistIndex : 0,
+            status: 'new',
+            createdAt: serverTimestamp(),
+            srsLevel: 0,
+            nextDueDate: serverTimestamp(),
+            recurrentCount: 0,
+            normalizedFen: normFen,
+            reviewState: {
+                isSolved: false,
+                attempts: 0,
+                lastAttempt: null,
+                successCount: 0,
+                failCount: 0
+            }
+        });
+    }
 
     const updatedPuzzles = puzzlesList.filter((_, idx) => idx !== indexToApprove);
     const userRef = doc(db, 'users', userId);
@@ -1208,43 +1396,73 @@ export async function approvePendingPuzzle(userId, puzzleToSave, puzzlesList, in
 
     await batch.commit();
     await enforcePlaylistLimits(userId);
-    return updatedPuzzles;
+    return { puzzles: updatedPuzzles, duplicate: isDuplicate };
 }
 
 /**
  * Save approved puzzles in batch
  */
 export async function saveApprovedPuzzles(userId, approvedPuzzles) {
-    const stats = await getUserPuzzleStats(userId);
-    if (stats.total + approvedPuzzles.length > 70) {
-        throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
-    }
+    const q = query(
+        collection(db, 'puzzles'),
+        where('userId', '==', userId)
+    );
+    const snapshot = await getDocs(q);
+    const existing = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    let currentTotal = existing.length;
     const batch = writeBatch(db);
-    
+
     approvedPuzzles.forEach(puzzle => {
-        const puzzleRef = doc(collection(db, 'puzzles'));
-        
-        batch.set(puzzleRef, {
-            fen: puzzle.fen,
-            correctMove: puzzle.correctMove,
-            customName: puzzle.customName || 'Blunder Position',
-            opening: puzzle.opening || puzzle.openingName || 'Unknown Opening',
-            theme: puzzle.theme || 'Blunder',
-            userColor: puzzle.userColor || puzzle.playerColor || 'white',
-            type: 'opening_blunder',
-            userId,
-            isFavorite: puzzle.isFavorite || false,
-            playlistIndex: puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0,
-            status: 'new',
-            createdAt: serverTimestamp(),
-            reviewState: {
-                isSolved: false,
-                attempts: 0,
-                lastAttempt: null,
-                successCount: 0,
-                failCount: 0
+        const normFen = normalizeFen(puzzle.fen);
+        const duplicate = existing.find(p => normalizeFen(p.fen) === normFen);
+
+        if (duplicate) {
+            const puzzleRef = doc(db, 'puzzles', duplicate.id);
+            batch.update(puzzleRef, {
+                srsLevel: 0,
+                nextDueDate: serverTimestamp(),
+                status: 'active',
+                lastResult: 'fail',
+                recurrentCount: increment(1),
+                'reviewState.failCount': increment(1),
+                'reviewState.attempts': increment(1),
+                'reviewState.isSolved': false,
+                lastAttemptedAt: serverTimestamp()
+            });
+        } else {
+            if (currentTotal >= 70) {
+                throw new Error('REPERTOIRE_LIMIT_EXCEEDED');
             }
-        });
+            currentTotal++;
+
+            const puzzleRef = doc(collection(db, 'puzzles'));
+            batch.set(puzzleRef, {
+                fen: puzzle.fen,
+                correctMove: puzzle.correctMove,
+                customName: puzzle.customName || 'Blunder Position',
+                opening: puzzle.opening || puzzle.openingName || 'Unknown Opening',
+                theme: puzzle.theme || 'Blunder',
+                userColor: puzzle.userColor || puzzle.playerColor || 'white',
+                type: 'opening_blunder',
+                userId,
+                isFavorite: puzzle.isFavorite || false,
+                playlistIndex: puzzle.playlistIndex !== undefined ? puzzle.playlistIndex : 0,
+                status: 'new',
+                createdAt: serverTimestamp(),
+                srsLevel: 0,
+                nextDueDate: serverTimestamp(),
+                recurrentCount: 0,
+                normalizedFen: normFen,
+                reviewState: {
+                    isSolved: false,
+                    attempts: 0,
+                    lastAttempt: null,
+                    successCount: 0,
+                    failCount: 0
+                }
+            });
+        }
     });
 
     await batch.commit();
@@ -1281,6 +1499,59 @@ export async function ignorePendingPuzzle(userId, gameId, puzzlesList, indexToIg
     
     await batch.commit();
     return updatedPuzzles;
+}
+
+/**
+ * Silent duplicate resolution inside game analysis scans.
+ * Resolves duplicates immediately and returns only unique new puzzles.
+ */
+export async function processScanDuplicates(userId, puzzles) {
+    if (!puzzles || puzzles.length === 0) return [];
+    
+    const q = query(
+        collection(db, 'puzzles'),
+        where('userId', '==', userId)
+    );
+    const snapshot = await getDocs(q);
+    const existing = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    
+    const uniquePuzzles = [];
+    const batch = writeBatch(db);
+    let hasUpdates = false;
+    
+    for (const puzzle of puzzles) {
+        const normFen = normalizeFen(puzzle.fen);
+        const dup = existing.find(p => normalizeFen(p.fen) === normFen);
+        
+        if (dup) {
+            const dupRef = doc(db, 'puzzles', dup.id);
+            batch.update(dupRef, {
+                srsLevel: 0,
+                nextDueDate: serverTimestamp(),
+                status: 'active',
+                lastResult: 'fail',
+                recurrentCount: increment(1),
+                'reviewState.failCount': increment(1),
+                'reviewState.attempts': increment(1),
+                'reviewState.isSolved': false,
+                lastAttemptedAt: serverTimestamp()
+            });
+            hasUpdates = true;
+        } else {
+            uniquePuzzles.push(puzzle);
+        }
+    }
+    
+    if (hasUpdates) {
+        await batch.commit();
+        try {
+            window.dispatchEvent(new CustomEvent('repertoire-updated'));
+        } catch {
+            // window object might not be defined in non-browser/test environments
+        }
+    }
+    
+    return uniquePuzzles;
 }
 
 
