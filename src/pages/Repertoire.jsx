@@ -4,8 +4,9 @@ import { useAuth } from '../context/AuthContext';
 import {
     BookOpen, Search, Filter, Folder, FolderOpen,
     ChevronDown, ChevronUp, Edit3, Check, X,
-    Target, Loader2, Award, Clock, ArrowRight,
-    MoveRight, Trash2, Star, Play, AlertTriangle, Plus
+    Loader2, Award, Clock, ArrowRight,
+    MoveRight, Trash2, Star, Play, AlertTriangle, Plus,
+    ArrowUpDown
 } from 'lucide-react';
 import {
     getUserPlaylists,
@@ -80,7 +81,10 @@ export default function Repertoire() {
     const [groups, setGroups] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
+    const [colorFilter, setColorFilter] = useState('all');
+    const [sortOption, setSortOption] = useState('newest');
     const [expandedGroups, setExpandedGroups] = useState({});
+    const isFiltering = searchQuery.trim() !== '' || statusFilter !== 'all' || colorFilter !== 'all';
 
     // Inline edit states for Puzzles
     const [editingPuzzleId, setEditingPuzzleId] = useState(null);
@@ -190,12 +194,18 @@ export default function Repertoire() {
         return () => clearTimeout(timer);
     }, [user?.uid, viewMode, loadRepertoire]);
 
-    // Pick up ?filter= query parameter from URL to auto-apply status filter
+    // Pick up ?filter= query parameter from URL to auto-apply status/color filters
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const filterParam = params.get('filter');
-        if (filterParam && ['all', 'new', 'active', 'white', 'black'].includes(filterParam)) {
-            setStatusFilter(filterParam);
+        if (filterParam) {
+            if (['white', 'black'].includes(filterParam)) {
+                setColorFilter(filterParam);
+                setStatusFilter('all');
+            } else if (['all', 'new', 'active', 'srs_due'].includes(filterParam)) {
+                setStatusFilter(filterParam);
+                setColorFilter('all');
+            }
         }
     }, []);
 
@@ -493,104 +503,93 @@ export default function Repertoire() {
         }
     };
 
-    const handleTrainPlaylist = (puzzlesList) => {
-        if (!puzzlesList || puzzlesList.length === 0) return;
-        const puzzleIds = puzzlesList.map(p => p.id);
-        
-        // Shuffle puzzles from the playlist for the training queue
-        const shuffled = [...puzzleIds].sort(() => 0.5 - Math.random());
-        
-        sessionStorage.setItem('oneTimePlaylist', JSON.stringify(shuffled));
-        sessionStorage.setItem('oneTimeSessionResults', JSON.stringify([]));
-        navigate('/dashboard/train?session=one-time');
-    };
-
-    // Launch 10-Puzzle Training Session (respects active filters)
-    const handleLaunchSession = () => {
-        const filteredPuzzles = filteredGroups.flatMap(g => g.filteredPuzzles);
-        const allPuzzles = groups.flatMap(g => g.puzzles);
-
-        if (allPuzzles.length === 0) {
-            setToast({ message: 'No puzzles available in your repertoire. Analyse games first!', type: 'error' });
-            setTimeout(() => setToast(null), 4000);
-            return;
-        }
-
-        const hasActiveFilters = searchQuery.trim() !== '' || statusFilter !== 'all';
-
-        if (hasActiveFilters) {
-            if (filteredPuzzles.length === 0) {
-                setToast({ message: 'No puzzles match your currently selected filters!', type: 'error' });
-                setTimeout(() => setToast(null), 4000);
-                return;
-            }
-
-            showConfirm(
-                `You have active filters. The training session will only include the ${Math.min(filteredPuzzles.length, 10)} puzzles matching your selected filters. Proceed?`,
-                () => {
-                    // Shuffle and select up to 10 matching puzzles
-                    const shuffled = [...filteredPuzzles].sort(() => 0.5 - Math.random());
-                    const selected = shuffled.slice(0, 10).map(p => p.id);
-
-                    sessionStorage.setItem('oneTimePlaylist', JSON.stringify(selected));
-                    sessionStorage.setItem('oneTimeSessionResults', JSON.stringify([]));
-                    navigate('/dashboard/train?session=one-time');
-                },
-                null,
-                'Proceed with Filters',
-                'confirm'
-            );
+    const handleTrainPlaylist = (playlist) => {
+        if (viewMode === 'playlists') {
+            const id = playlist.playlistIndex !== undefined ? playlist.playlistIndex : 'favorites';
+            navigate(`/dashboard/train?playlistId=${id}`);
         } else {
-            // Unfiltered session: shuffle and take 10 random puzzles from the entire deck
-            const shuffled = [...allPuzzles].sort(() => 0.5 - Math.random());
-            const selected = shuffled.slice(0, 10).map(p => p.id);
-
-            sessionStorage.setItem('oneTimePlaylist', JSON.stringify(selected));
-            sessionStorage.setItem('oneTimeSessionResults', JSON.stringify([]));
-            navigate('/dashboard/train?session=one-time');
+            navigate(`/dashboard/train?opening=${encodeURIComponent(playlist.title)}`);
         }
     };
 
 
-    // Filters and search logic (Only by puzzle name)
-    const filteredGroups = groups.map(group => {
-        const filteredPuzzles = group.puzzles.filter(puzzle => {
+    // Common helper to filter and sort puzzles
+    const getFilteredAndSortedPuzzles = useCallback((puzzlesList) => {
+        const now = new Date();
+        
+        const getCreatedAtTime = (p) => {
+            if (!p.createdAt) return 0;
+            if (typeof p.createdAt.toMillis === 'function') return p.createdAt.toMillis();
+            if (typeof p.createdAt.seconds === 'number') return p.createdAt.seconds * 1000;
+            return new Date(p.createdAt).getTime() || 0;
+        };
+
+        const getNextDueDateTime = (p) => {
+            if (!p.nextDueDate) return 0;
+            if (typeof p.nextDueDate.toMillis === 'function') return p.nextDueDate.toMillis();
+            if (typeof p.nextDueDate.seconds === 'number') return p.nextDueDate.seconds * 1000;
+            return new Date(p.nextDueDate).getTime() || 0;
+        };
+
+        const filtered = puzzlesList.filter(puzzle => {
             const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
             const matchesSearch =
                 !searchQuery.trim() ||
                 nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
 
+            const isDue = puzzle.nextDueDate
+                ? getNextDueDateTime(puzzle) <= now.getTime()
+                : true;
+
             const matchesStatus =
                 statusFilter === 'all' ||
                 (statusFilter === 'new' && puzzle.status === 'new') ||
-                (statusFilter === 'active' && (puzzle.status === 'active' || puzzle.lastResult === 'fail')) ||
-                (statusFilter === 'white' && puzzle.userColor === 'white') ||
-                (statusFilter === 'black' && puzzle.userColor === 'black');
+                (statusFilter === 'srs_due' && isDue) ||
+                (statusFilter === 'active' && (puzzle.lastResult === 'fail' || (puzzle.reviewState?.failCount || 0) > 0));
 
-            return matchesSearch && matchesStatus;
+            const matchesColor =
+                colorFilter === 'all' ||
+                puzzle.userColor === colorFilter;
+
+            return matchesSearch && matchesStatus && matchesColor;
         });
 
+        return [...filtered].sort((a, b) => {
+            if (sortOption === 'oldest') {
+                const timeA = getCreatedAtTime(a);
+                const timeB = getCreatedAtTime(b);
+                if (timeA !== timeB) return timeA - timeB;
+                return a.id.localeCompare(b.id);
+            }
+            if (sortOption === 'failed') {
+                const aFail = (a.recurrentCount || 0) * 10 + (a.reviewState?.failCount || 0);
+                const bFail = (b.recurrentCount || 0) * 10 + (b.reviewState?.failCount || 0);
+                if (aFail !== bFail) return bFail - aFail;
+                return getCreatedAtTime(b) - getCreatedAtTime(a);
+            }
+            if (sortOption === 'due_date') {
+                const timeA = getNextDueDateTime(a);
+                const timeB = getNextDueDateTime(b);
+                if (timeA !== timeB) return timeA - timeB;
+                return getCreatedAtTime(b) - getCreatedAtTime(a);
+            }
+            // 'newest' (default)
+            const timeA = getCreatedAtTime(a);
+            const timeB = getCreatedAtTime(b);
+            if (timeA !== timeB) return timeB - timeA;
+            return b.id.localeCompare(a.id);
+        });
+    }, [searchQuery, statusFilter, colorFilter, sortOption]);
+
+    // Filters and search logic
+    const filteredGroups = groups.map(group => {
         return {
             ...group,
-            filteredPuzzles
+            filteredPuzzles: getFilteredAndSortedPuzzles(group.puzzles)
         };
     });
 
-    const filteredFavPuzzles = favPuzzles.filter(puzzle => {
-        const nameToSearch = puzzle.customName || puzzle.opening || 'Puzzle';
-        const matchesSearch =
-            !searchQuery.trim() ||
-            nameToSearch.toLowerCase().includes(searchQuery.toLowerCase());
-
-        const matchesStatus =
-            statusFilter === 'all' ||
-            (statusFilter === 'new' && puzzle.status === 'new') ||
-            (statusFilter === 'active' && (puzzle.status === 'active' || puzzle.lastResult === 'fail')) ||
-            (statusFilter === 'white' && puzzle.userColor === 'white') ||
-            (statusFilter === 'black' && puzzle.userColor === 'black');
-
-        return matchesSearch && matchesStatus;
-    });
+    const filteredFavPuzzles = getFilteredAndSortedPuzzles(favPuzzles);
 
     const hasAnyPuzzles = groups.some(g => g.total > 0 || g.puzzles.length > 0);
 
@@ -665,43 +664,84 @@ export default function Repertoire() {
                                 <Plus size={16} /> Create Playlist
                             </button>
                         )}
-                        {hasAnyPuzzles && (
-                            <button
-                                onClick={handleLaunchSession}
-                                className="bg-chess-accent hover:bg-chess-accent-hover text-white px-4 py-2.5 rounded-lg font-bold shadow-lg shadow-chess-accent/20 flex items-center gap-2 transition-all hover:-translate-y-0.5 text-sm"
-                            >
-                                <Play size={16} fill="currentColor" /> Start Training Session
-                            </button>
-                        )}
                     </div>
                 </div>
 
                 {/* Filters & Search Controls */}
-                <div className="flex flex-col md:flex-row gap-4 mb-8 bg-chess-panel border border-white/5 p-4 rounded-xl">
-                    <div className="relative flex-1">
+                <div className="flex flex-col lg:flex-row gap-4 mb-8 bg-chess-panel border border-white/5 p-4 rounded-xl items-stretch lg:items-center">
+                    <div className="relative flex-1 text-left">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-chess-text-secondary" size={18} />
                         <input
                             type="text"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             placeholder="Search by puzzle name..."
-                            className="w-full bg-chess-bg/50 border border-white/10 focus:border-chess-accent focus:ring-0 text-white pl-10 pr-4 py-2 rounded-lg placeholder:text-chess-text-secondary transition-colors"
+                            className="w-full bg-chess-bg/50 border border-white/10 focus:border-chess-accent focus:ring-0 text-white pl-10 pr-4 py-2.5 rounded-lg placeholder:text-chess-text-secondary transition-colors text-sm"
                         />
                     </div>
 
-                    <div className="flex items-center gap-3">
-                        <Filter className="text-chess-text-secondary shrink-0" size={18} />
-                        <select
-                            value={statusFilter}
-                            onChange={(e) => setStatusFilter(e.target.value)}
-                            className="bg-chess-bg border border-white/10 text-white py-2 pl-3 pr-8 rounded-lg focus:border-chess-accent focus:ring-0 text-sm font-medium transition-colors"
-                        >
-                            <option value="all">All Puzzles</option>
-                            <option value="new">New Puzzles</option>
-                            <option value="active">Failed Puzzles</option>
-                            <option value="white">White Color</option>
-                            <option value="black">Black Color</option>
-                        </select>
+                    <div className="flex flex-wrap items-center gap-4">
+                        {/* Status Filter */}
+                        <div className="flex items-center gap-2 flex-1 sm:flex-initial">
+                            <Filter className="text-chess-text-secondary shrink-0" size={16} />
+                            <select
+                                value={statusFilter}
+                                onChange={(e) => setStatusFilter(e.target.value)}
+                                className="w-full sm:w-auto bg-chess-bg border border-white/10 text-white py-2 pl-3 pr-8 rounded-lg focus:border-chess-accent focus:ring-0 text-xs font-semibold transition-colors"
+                            >
+                                <option value="all">All Statuses</option>
+                                <option value="new">New Puzzles</option>
+                                <option value="srs_due">Due for Review</option>
+                                <option value="active">Failed Puzzles</option>
+                            </select>
+                        </div>
+
+                        {/* Color Filter */}
+                        <div className="flex items-center gap-2 flex-1 sm:flex-initial">
+                            <svg viewBox="0 0 24 24" className="text-chess-text-secondary shrink-0" fill="currentColor" style={{ width: '16px', height: '16px' }}>
+                                <path d="M12 2a3 3 0 0 0-3 3c0 1 .5 1.9 1.3 2.4C8.9 8.2 8 9.5 8 11v3h8v-3c0-1.5-.9-2.8-2.3-3.6.8-.5 1.3-1.4 1.3-2.4a3 3 0 0 0-3-3zM6 20h12v-2H6v2zm3-3h6v-3H9v3z" />
+                            </svg>
+                            <select
+                                value={colorFilter}
+                                onChange={(e) => setColorFilter(e.target.value)}
+                                className="w-full sm:w-auto bg-chess-bg border border-white/10 text-white py-2 pl-3 pr-8 rounded-lg focus:border-chess-accent focus:ring-0 text-xs font-semibold transition-colors"
+                            >
+                                <option value="all">All Colors</option>
+                                <option value="white">White Pieces</option>
+                                <option value="black">Black Pieces</option>
+                            </select>
+                        </div>
+
+                        {/* Sort Option */}
+                        <div className="flex items-center gap-2 flex-1 sm:flex-initial">
+                            <ArrowUpDown className="text-chess-text-secondary shrink-0" size={16} />
+                            <select
+                                value={sortOption}
+                                onChange={(e) => setSortOption(e.target.value)}
+                                className="w-full sm:w-auto bg-chess-bg border border-white/10 text-white py-2 pl-3 pr-8 rounded-lg focus:border-chess-accent focus:ring-0 text-xs font-semibold transition-colors"
+                            >
+                                <option value="newest">Newest First</option>
+                                <option value="oldest">Oldest First</option>
+                                <option value="failed">Most Failed</option>
+                                <option value="due_date">Due Date</option>
+                            </select>
+                        </div>
+
+                        {/* Reset Filters */}
+                        {(searchQuery.trim() !== '' || statusFilter !== 'all' || colorFilter !== 'all' || sortOption !== 'newest') && (
+                            <button
+                                onClick={() => {
+                                    setSearchQuery('');
+                                    setStatusFilter('all');
+                                    setColorFilter('all');
+                                    setSortOption('newest');
+                                }}
+                                className="text-xs font-bold text-red-400 hover:text-red-300 transition-colors flex items-center gap-1 border border-red-500/20 hover:border-red-500/30 px-3 py-2 bg-red-500/5 hover:bg-red-500/10 rounded-lg h-[34px] sm:h-auto"
+                                title="Reset all filters and sorting"
+                            >
+                                <X size={14} /> Clear
+                            </button>
+                        )}
                     </div>
                 </div>
 
@@ -850,7 +890,7 @@ export default function Repertoire() {
                                                     <span className="flex items-center gap-1">
                                                         <Folder size={14} /> {playlist.puzzles.length} puzzles
                                                     </span>
-                                                    {playlist.filteredPuzzles.length !== playlist.puzzles.length && (
+                                                    {(isFiltering || playlist.filteredPuzzles.length !== playlist.puzzles.length) && (
                                                         <span className="text-chess-accent">({playlist.filteredPuzzles.length} match filters)</span>
                                                     )}
                                                 </div>
@@ -863,7 +903,7 @@ export default function Repertoire() {
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        handleTrainPlaylist(playlist.puzzles);
+                                                        handleTrainPlaylist(playlist);
                                                     }}
                                                     className="px-4 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-extrabold text-xs shadow-lg shadow-chess-accent/15 transition-all flex items-center gap-1.5 hover:-translate-y-0.5 active:scale-95 cursor-pointer shrink-0"
                                                     title="Start training this playlist"
@@ -944,6 +984,15 @@ export default function Repertoire() {
                                                                         {puzzle.status === 'new' && (
                                                                             <span className="text-[9px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 animate-pulse shrink-0">
                                                                                 NEW
+                                                                            </span>
+                                                                        )}
+                                                                        {puzzle.userColor === 'white' ? (
+                                                                            <span className="bg-white/10 text-white border border-white/20 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-white" /> White
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="bg-black/40 text-slate-300 border border-white/5 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                                                                <span className="w-1.5 h-1.5 rounded-full bg-slate-500" /> Black
                                                                             </span>
                                                                         )}
                                                                         <button
@@ -1081,7 +1130,7 @@ export default function Repertoire() {
                                                 <span className="flex items-center gap-1">
                                                     <Star size={14} /> {favPuzzles.length}/10 puzzles
                                                 </span>
-                                                {filteredFavPuzzles.length !== favPuzzles.length && (
+                                                {(isFiltering || filteredFavPuzzles.length !== favPuzzles.length) && (
                                                     <span className="text-chess-accent">({filteredFavPuzzles.length} match filters)</span>
                                                 )}
                                             </div>
@@ -1094,7 +1143,7 @@ export default function Repertoire() {
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
-                                                    handleTrainPlaylist(favPuzzles);
+                                                    handleTrainPlaylist({ playlistIndex: 'favorites' });
                                                 }}
                                                 className="px-4 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-extrabold text-xs shadow-lg shadow-chess-accent/15 transition-all flex items-center gap-1.5 hover:-translate-y-0.5 active:scale-95 cursor-pointer shrink-0"
                                                 title="Start training favorites"
@@ -1175,6 +1224,15 @@ export default function Repertoire() {
                                                                     {puzzle.status === 'new' && (
                                                                         <span className="text-[9px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 animate-pulse shrink-0">
                                                                             NEW
+                                                                        </span>
+                                                                    )}
+                                                                    {puzzle.userColor === 'white' ? (
+                                                                        <span className="bg-white/10 text-white border border-white/20 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                                                            <span className="w-1.5 h-1.5 rounded-full bg-white" /> White
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className="bg-black/40 text-slate-300 border border-white/5 px-2 py-0.5 rounded-md text-[10px] font-bold flex items-center gap-1 shrink-0">
+                                                                            <span className="w-1.5 h-1.5 rounded-full bg-slate-500" /> Black
                                                                         </span>
                                                                     )}
                                                                     <button
