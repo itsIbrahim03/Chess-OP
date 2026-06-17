@@ -2,7 +2,8 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { completeOnboarding, verifyLichessUsername } from '../services/userService';
-import { ArrowRight, User, Globe, Settings, ShieldCheck, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { ArrowRight, User, Globe, Settings, ShieldCheck, Loader2, CheckCircle2, XCircle, Compass, AlertTriangle } from 'lucide-react';
+import { translateError } from '../lib/errorTranslator';
 
 export default function Onboarding() {
   const { user } = useAuth();
@@ -10,8 +11,10 @@ export default function Onboarding() {
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [lichessUsername, setLichessUsername] = useState('');
   const [minElo, setMinElo] = useState(1500);
+  const [engineDepth, setEngineDepth] = useState(14);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  const [displayNameError, setDisplayNameError] = useState(null);
   const [lichessVerifyState, setLichessVerifyState] = useState('idle'); // idle | loading | valid | invalid
   const [lichessVerifyProfile, setLichessVerifyProfile] = useState(null);
   const verifyTimer = useRef(null);
@@ -40,25 +43,27 @@ export default function Onboarding() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!displayName.trim()) {
-      setError('Please enter your name.');
+      setDisplayNameError('Please fill out this field.');
       return;
     }
 
     try {
       setError(null);
+      setDisplayNameError(null);
       setSaving(true);
       await completeOnboarding(user.uid, {
         displayName: displayName.trim(),
         lichessUsername: lichessUsername.trim(),
         settings: {
-          minElo: parseInt(minElo, 10)
+          minElo: parseInt(minElo, 10),
+          engineDepth: parseInt(engineDepth, 10)
         }
       });
       // Navigate to dashboard
       navigate('/dashboard');
     } catch (err) {
       setSaving(false);
-      setError(err.message || 'Failed to complete setup. Please try again.');
+      setError(translateError(err));
     }
   };
 
@@ -80,8 +85,8 @@ export default function Onboarding() {
         
         <div className="relative bg-chess-panel/60 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 sm:p-10 shadow-2xl">
           <div className="flex flex-col items-center text-center mb-8">
-            <div className="w-16 h-16 bg-chess-accent/10 border border-chess-accent/20 rounded-2xl flex items-center justify-center mb-4">
-              <span className="text-3xl text-chess-accent">🏆</span>
+            <div className="w-16 h-16 bg-chess-accent/10 border border-chess-accent/20 text-chess-accent rounded-2xl flex items-center justify-center mb-4">
+              <Compass size={32} />
             </div>
             <h1 className="text-3xl font-serif font-bold text-white mb-2">Let's Complete Your Setup</h1>
             <p className="text-chess-text-secondary text-sm max-w-md">
@@ -90,12 +95,13 @@ export default function Onboarding() {
           </div>
 
           {error && (
-            <div className="mb-6 p-4 bg-chess-status-error/10 border border-chess-status-error/20 rounded-xl text-chess-status-error text-sm font-medium">
-              {error}
+            <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-start gap-3 text-rose-400 text-sm font-medium leading-relaxed animate-in">
+              <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+              <span>{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-6" noValidate>
             {/* Step 1: Personal Details */}
             <div className="bg-white/5 border border-white/5 rounded-2xl p-6">
               <h2 className="text-lg font-bold text-white flex items-center gap-2 mb-4">
@@ -107,11 +113,18 @@ export default function Onboarding() {
                 <input
                   type="text"
                   value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
+                  onChange={(e) => {
+                    setDisplayName(e.target.value);
+                    if (displayNameError) setDisplayNameError(null);
+                  }}
                   placeholder="Enter your name"
-                  required
-                  className="w-full bg-chess-bg/80 border border-white/10 text-white rounded-xl py-3.5 px-4 focus:outline-none focus:border-chess-accent/50 transition-colors"
+                  className={`w-full bg-chess-bg/80 border text-white rounded-xl py-3.5 px-4 focus:outline-none transition-colors ${
+                    displayNameError ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/50"
+                  }`}
                 />
+                {displayNameError && (
+                  <p className="text-xs text-rose-400 font-medium pl-1 mt-1.5 animate-in">{displayNameError}</p>
+                )}
               </div>
             </div>
 
@@ -183,6 +196,28 @@ export default function Onboarding() {
                     onChange={(e) => setMinElo(e.target.value)}
                     className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-chess-accent"
                   />
+                </div>
+
+                {/* Engine Depth Slider */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-white">Stockfish Evaluation Depth</span>
+                    <span className="text-sm font-bold text-chess-accent">
+                      Depth {engineDepth} ({engineDepth <= 10 ? 'Fast' : engineDepth <= 14 ? 'Balanced' : 'Deep'})
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="20"
+                    step="1"
+                    value={engineDepth}
+                    onChange={(e) => setEngineDepth(parseInt(e.target.value, 10))}
+                    className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-chess-accent"
+                  />
+                  <p className="text-[11px] text-chess-text-secondary mt-1">
+                    Higher plies depth makes Stockfish analyze positions deeper for higher quality blunders, but takes longer during scans.
+                  </p>
                 </div>
               </div>
             </div>

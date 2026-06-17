@@ -61,9 +61,9 @@ export async function initializeUserProfile(user) {
         // Dashboard Stats
         stats: {
             totalSolved: 0,
-            streak: 0,
             lastActive: serverTimestamp(),
-            totalGamesAnalyzed: 0
+            xp: 0,
+            level: 1
         },
 
         // User Preferences
@@ -77,8 +77,7 @@ export async function initializeUserProfile(user) {
         },
 
         // Metadata
-        createdAt: serverTimestamp(),
-        lastScan: null
+        createdAt: serverTimestamp()
     });
 }
 
@@ -125,10 +124,19 @@ export async function getUserProfile(userId) {
     if (data.settings?.notificationsEnabled !== undefined) deletes['settings.notificationsEnabled'] = deleteField();
     if (data.settings?.soundEnabled !== undefined) deletes['settings.soundEnabled'] = deleteField();
     if (data.settings?.piecesSet !== undefined) deletes['settings.piecesSet'] = deleteField();
+    
+    // Purge new unused fields
+    if (data.lastScan !== undefined) deletes.lastScan = deleteField();
+    if (data.stats?.streak !== undefined) deletes['stats.streak'] = deleteField();
+    if (data.stats?.totalGamesAnalyzed !== undefined) deletes['stats.totalGamesAnalyzed'] = deleteField();
+    if (data.stats?.totalReviews !== undefined) deletes['stats.totalReviews'] = deleteField();
+    if (data.stats?.totalCorrectReviews !== undefined) deletes['stats.totalCorrectReviews'] = deleteField();
+    if (data.stats?.reviewAccuracy !== undefined) deletes['stats.reviewAccuracy'] = deleteField();
 
     if (Object.keys(deletes).length > 0) {
         await updateDoc(userRef, deletes);
         delete data.rotationCount;
+        delete data.lastScan;
         if (data.settings) {
             delete data.settings.theme;
             delete data.settings.autoAnalyze;
@@ -136,6 +144,13 @@ export async function getUserProfile(userId) {
             delete data.settings.notificationsEnabled;
             delete data.settings.soundEnabled;
             delete data.settings.piecesSet;
+        }
+        if (data.stats) {
+            delete data.stats.streak;
+            delete data.stats.totalGamesAnalyzed;
+            delete data.stats.totalReviews;
+            delete data.stats.totalCorrectReviews;
+            delete data.stats.reviewAccuracy;
         }
     }
 
@@ -243,39 +258,26 @@ export async function updateDailyStreak(userId) {
 
     const data = userSnap.data();
     const lastActive = data?.stats?.lastActive?.toDate?.();
-    const currentStreak = data?.stats?.streak || 0;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    let newStreak = currentStreak;
     let shouldUpdate = true;
 
-    if (lastActive && currentStreak > 0) {
+    if (lastActive) {
         const lastDay = new Date(lastActive);
         lastDay.setHours(0, 0, 0, 0);
 
         const diffDays = Math.round((today - lastDay) / (1000 * 60 * 60 * 24));
 
         if (diffDays === 0) {
-            // Already visited today — no change to streak
+            // Already visited today — no need to update lastActive
             shouldUpdate = false;
-        } else if (diffDays === 1) {
-            // Visited yesterday — extend streak
-            newStreak = currentStreak + 1;
-        } else {
-            // Missed one or more days — reset streak
-            newStreak = 1;
         }
-    } else {
-        // First ever visit or streak is currently 0
-        newStreak = 1;
-        shouldUpdate = true;
     }
 
     if (shouldUpdate) {
         await updateDoc(userRef, {
-            'stats.streak': newStreak,
             'stats.lastActive': serverTimestamp()
         });
     }
@@ -413,7 +415,6 @@ export async function clearAllAccountData(userId) {
         photoUrl: data.photoUrl || 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
         playlistNames: {}, // Reset to empty map to allow creating custom playlists correctly
         showWelcomeTour: false,
-        lastScan: null,
         pendingScan: null,
         
         // Remove unused/deprecated fields completely
@@ -424,6 +425,14 @@ export async function clearAllAccountData(userId) {
         'settings.accentColor': deleteField(),
         'settings.notificationsEnabled': deleteField(),
         'settings.soundEnabled': deleteField(),
+        
+        // Purge new unused fields
+        lastScan: deleteField(),
+        'stats.streak': deleteField(),
+        'stats.totalGamesAnalyzed': deleteField(),
+        'stats.totalReviews': deleteField(),
+        'stats.totalCorrectReviews': deleteField(),
+        'stats.reviewAccuracy': deleteField(),
 
         settings: {
             showCoordinates: true,
@@ -436,8 +445,8 @@ export async function clearAllAccountData(userId) {
         stats: {
             lastActive: serverTimestamp(),
             totalSolved: 0,
-            totalGamesAnalyzed: 0,
-            streak: 0
+            xp: 0,
+            level: 1
         }
     });
 

@@ -14,6 +14,8 @@ import {
 import { BOARD_THEMES } from '../lib/boardThemes';
 import { PIECE_SETS } from '../lib/pieceSets';
 import { COUNTRIES } from '../lib/countries';
+import { translateError } from '../lib/errorTranslator';
+
 
 // ─── Constants ──────────────────────────────────────────────────────────
 const CHESS_FLAIRS = [
@@ -235,6 +237,7 @@ export default function Settings() {
     const [saving, setSaving] = useState(false);
     const [userProfile, setUserProfile] = useState(null);
 
+
     // Lichess
     const [lichessUsername, setLichessUsername] = useState('');
     const { verifyState, verifyProfile, verify, reset: resetVerify } = useLichessVerification();
@@ -307,8 +310,7 @@ export default function Settings() {
                 verify(profile.lichessUsername);
             }
         } catch (error) {
-            console.error('Failed to load profile:', error);
-            setMessage({ type: 'error', text: 'Failed to load settings' });
+            setMessage({ type: 'error', text: translateError(error) });
         } finally {
             setLoading(false);
         }
@@ -336,8 +338,7 @@ export default function Settings() {
             setMessage({ type: 'success', text: 'Lichess account linked successfully!' });
             await loadUserProfile();
         } catch (error) {
-            console.error('Failed to link account:', error);
-            setMessage({ type: 'error', text: 'Failed to link Lichess account' });
+            setMessage({ type: 'error', text: translateError(error) });
         } finally {
             setSaving(false);
         }
@@ -352,8 +353,7 @@ export default function Settings() {
             setMessage({ type: 'success', text: 'Lichess account disconnected successfully.' });
             await loadUserProfile();
         } catch (error) {
-            console.error('Failed to disconnect Lichess:', error);
-            setMessage({ type: 'error', text: 'Failed to disconnect Lichess account' });
+            setMessage({ type: 'error', text: translateError(error) });
         } finally {
             setSaving(false);
         }
@@ -371,8 +371,7 @@ export default function Settings() {
             setMessage({ type: 'success', text: 'Profile updated successfully!' });
             await loadUserProfile();
         } catch (error) {
-            console.error('Failed to save profile:', error);
-            setMessage({ type: 'error', text: 'Failed to save profile' });
+            setMessage({ type: 'error', text: translateError(error) });
         } finally {
             setSaving(false);
         }
@@ -383,8 +382,7 @@ export default function Settings() {
             await updateUserSettings(user.uid, updatedSettings);
             setMessage({ type: 'success', text: 'Preferences saved' });
         } catch (error) {
-            console.error('Failed to save settings:', error);
-            setMessage({ type: 'error', text: 'Failed to save preferences' });
+            setMessage({ type: 'error', text: translateError(error) });
         }
     };
 
@@ -405,8 +403,7 @@ export default function Settings() {
             });
             await loadUserProfile();
         } catch (e) {
-            console.error('Clear failed:', e);
-            setMessage({ type: 'error', text: `Clear failed: ${e.message}` });
+            setMessage({ type: 'error', text: translateError(e) });
         } finally {
             setClearing(false);
         }
@@ -559,7 +556,6 @@ export default function Settings() {
                         <User className="text-chess-accent" size={28} />
                         <h2 className="text-2xl font-bold text-white">Profile Customization</h2>
                     </div>
-
                     <div className="space-y-6">
                         {/* Display Name */}
                         <div>
@@ -850,7 +846,7 @@ export default function Settings() {
                                     <input
                                         type="number"
                                         min="10"
-                                        max="18"
+                                        max="20"
                                         value={settings.engineDepth}
                                         onChange={(e) => {
                                             const val = parseInt(e.target.value);
@@ -859,7 +855,7 @@ export default function Settings() {
                                         onBlur={(e) => {
                                             let val = parseInt(e.target.value);
                                             if (isNaN(val) || val < 10) val = 10;
-                                            else if (val > 18) val = 18;
+                                            else if (val > 20) val = 20;
                                             const updated = { ...settings, engineDepth: val };
                                             setSettings(updated);
                                             handleAutoSaveSettings(updated);
@@ -874,16 +870,16 @@ export default function Settings() {
                                     <span className="text-xs text-chess-text-secondary font-bold">
                                         ({settings.engineDepth <= 10 ? 'Fast' : settings.engineDepth <= 14 ? 'Balanced' : 'Deep'})
                                     </span>
-                                </div>
-                            </div>
-                            <input
-                                id="engineDepth"
-                                name="engineDepth"
-                                type="range"
-                                min="10"
-                                max="18"
-                                step="1"
-                                value={settings.engineDepth || 10}
+                                  </div>
+                              </div>
+                              <input
+                                  id="engineDepth"
+                                  name="engineDepth"
+                                  type="range"
+                                  min="10"
+                                  max="20"
+                                  step="1"
+                                  value={settings.engineDepth || 10}
                                 onChange={(e) => setSettings({ ...settings, engineDepth: parseInt(e.target.value) })}
                                 onMouseUp={(e) => {
                                     const val = parseInt(e.target.value);

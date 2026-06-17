@@ -12,6 +12,7 @@ import {
   Lock,
   User
 } from "lucide-react";
+import { translateError } from "../lib/errorTranslator";
 
 // Animated floating chess piece component
 const FloatingPiece = ({ piece, style, delay = 0 }) => (
@@ -43,6 +44,7 @@ export default function Login() {
 
   // UX State
   const [error, setError] = useState(null);
+  const [fieldErrors, setFieldErrors] = useState({});
   const [loadingAction, setLoadingAction] = useState(null); // 'google', 'email', null
   const [rememberMe, setRememberMe] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -112,21 +114,33 @@ export default function Login() {
   const handleEmailAuth = async (e) => {
     e.preventDefault();
     if (loadingAction) return;
-    if (!email.trim() || !password.trim()) {
-      setError("Please fill in all credentials.");
-      return;
-    }
+
+    const errors = {};
     if (isSignUp && !name.trim()) {
-      setError("Please enter your name.");
-      return;
+      errors.name = "Please fill out this field.";
     }
-    if (isSignUp && password !== confirmPassword) {
-      setError("Passwords do not match.");
+    if (!email.trim()) {
+      errors.email = "Please fill out this field.";
+    } else if (!/\S+@\S+\.\S+/.test(email)) {
+      errors.email = "Please enter a valid email address.";
+    }
+    if (!password) {
+      errors.password = "Please fill out this field.";
+    }
+    if (isSignUp && !confirmPassword) {
+      errors.confirmPassword = "Please fill out this field.";
+    } else if (isSignUp && password !== confirmPassword) {
+      errors.confirmPassword = "Passwords do not match.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
     try {
       setError(null);
+      setFieldErrors({});
       setLoadingAction('email');
       if (isSignUp) {
         await signupWithEmail(email, password, name, rememberMe);
@@ -141,27 +155,15 @@ export default function Login() {
   };
 
   const parseAuthError = (err) => {
-    console.error("Auth failed:", err);
-    const code = err.code || "";
+    const code = err ? (err.code || err.message || "") : "";
     if (code === "auth/popup-closed-by-user") {
       // Silently ignore user-cancelled login without showing an error banner
       return;
     } else if (code === "auth/popup-blocked") {
+      console.error("Popup was blocked by browser:", err);
       setError("Popup was blocked by your browser. Please allow popups and try again.");
-    } else if (code === "auth/network-request-failed") {
-      setError("Network error. Please check your internet connection.");
-    } else if (code === "auth/too-many-requests") {
-      setError("Too many sign-in attempts. Please wait a moment.");
-    } else if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
-      setError("Invalid email or password. Please verify your credentials.");
-    } else if (code === "auth/email-already-in-use") {
-      setError("This email address is already in use by another account.");
-    } else if (code === "auth/weak-password") {
-      setError("Password must be at least 6 characters long.");
-    } else if (code === "auth/invalid-email") {
-      setError("Invalid email address format.");
     } else {
-      setError(err.message || "An unexpected error occurred. Please try again.");
+      setError(translateError(err));
     }
   };
 
@@ -239,7 +241,7 @@ export default function Login() {
                 <div className="flex gap-4 mb-8 bg-chess-bg/90 p-1 rounded-xl border border-white/5">
                   <button
                     type="button"
-                    onClick={() => { setIsSignUp(false); setError(null); }}
+                    onClick={() => { setIsSignUp(false); setError(null); setFieldErrors({}); }}
                     className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
                       !isSignUp ? "bg-white/10 text-white shadow-lg" : "text-chess-text-secondary hover:text-white"
                     }`}
@@ -248,7 +250,7 @@ export default function Login() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setIsSignUp(true); setError(null); }}
+                    onClick={() => { setIsSignUp(true); setError(null); setFieldErrors({}); }}
                     className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
                       isSignUp ? "bg-white/10 text-white shadow-lg" : "text-chess-text-secondary hover:text-white"
                     }`}
@@ -265,13 +267,13 @@ export default function Login() {
                 )}
 
                 {error && (
-                  <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-start gap-3 animate-in">
-                    <AlertTriangle size={18} className="text-red-400 shrink-0 mt-0.5" />
-                    <span className="text-red-400 text-sm font-medium leading-relaxed">{error}</span>
+                  <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-start gap-3 animate-in">
+                    <AlertTriangle size={18} className="text-rose-400 shrink-0 mt-0.5" />
+                    <span className="text-rose-400 text-sm font-medium leading-relaxed">{error}</span>
                   </div>
                 )}
 
-                <form onSubmit={handleEmailAuth} className="space-y-4">
+                <form onSubmit={handleEmailAuth} className="space-y-4" noValidate>
                   {isSignUp && (
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold text-chess-text-secondary uppercase tracking-widest block">Full Name</label>
@@ -280,12 +282,19 @@ export default function Login() {
                         <input
                           type="text"
                           value={name}
-                          onChange={(e) => setName(e.target.value)}
+                          onChange={(e) => {
+                            setName(e.target.value);
+                            if (fieldErrors.name) setFieldErrors(prev => ({ ...prev, name: null }));
+                          }}
                           placeholder="e.g. Bobby Fischer"
-                          required
-                          className="w-full bg-chess-bg/75 border border-white/10 text-white rounded-xl py-3.5 px-11 focus:outline-none focus:border-chess-accent/40 transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium"
+                          className={`w-full bg-chess-bg/75 border text-white rounded-xl py-3.5 px-11 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
+                            fieldErrors.name ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
+                          }`}
                         />
                       </div>
+                      {fieldErrors.name && (
+                        <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.name}</p>
+                      )}
                     </div>
                   )}
 
@@ -296,12 +305,19 @@ export default function Login() {
                       <input
                         type="email"
                         value={email}
-                        onChange={(e) => setEmail(e.target.value)}
+                        onChange={(e) => {
+                          setEmail(e.target.value);
+                          if (fieldErrors.email) setFieldErrors(prev => ({ ...prev, email: null }));
+                        }}
                         placeholder="name@domain.com"
-                        required
-                        className="w-full bg-chess-bg/75 border border-white/10 text-white rounded-xl py-3.5 px-11 focus:outline-none focus:border-chess-accent/40 transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium"
+                        className={`w-full bg-chess-bg/75 border text-white rounded-xl py-3.5 px-11 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
+                          fieldErrors.email ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
+                        }`}
                       />
                     </div>
+                    {fieldErrors.email && (
+                      <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.email}</p>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
@@ -311,10 +327,14 @@ export default function Login() {
                       <input
                         type={showPassword ? "text" : "password"}
                         value={password}
-                        onChange={(e) => setPassword(e.target.value)}
+                        onChange={(e) => {
+                          setPassword(e.target.value);
+                          if (fieldErrors.password) setFieldErrors(prev => ({ ...prev, password: null }));
+                        }}
                         placeholder="••••••••"
-                        required
-                        className="w-full bg-chess-bg/75 border border-white/10 text-white rounded-xl py-3.5 px-11 pr-12 focus:outline-none focus:border-chess-accent/40 transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium"
+                        className={`w-full bg-chess-bg/75 border text-white rounded-xl py-3.5 px-11 pr-12 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
+                          fieldErrors.password ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
+                        }`}
                       />
                       <button
                         type="button"
@@ -324,6 +344,9 @@ export default function Login() {
                         {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
                     </div>
+                    {fieldErrors.password && (
+                      <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.password}</p>
+                    )}
                   </div>
 
                   {isSignUp && (
@@ -334,10 +357,14 @@ export default function Login() {
                         <input
                           type={showConfirmPassword ? "text" : "password"}
                           value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
+                          onChange={(e) => {
+                            setConfirmPassword(e.target.value);
+                            if (fieldErrors.confirmPassword) setFieldErrors(prev => ({ ...prev, confirmPassword: null }));
+                          }}
                           placeholder="••••••••"
-                          required
-                          className="w-full bg-chess-bg/75 border border-white/10 text-white rounded-xl py-3.5 px-11 pr-12 focus:outline-none focus:border-chess-accent/40 transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium"
+                          className={`w-full bg-chess-bg/75 border text-white rounded-xl py-3.5 px-11 pr-12 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
+                            fieldErrors.confirmPassword ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
+                          }`}
                         />
                         <button
                           type="button"
@@ -347,6 +374,9 @@ export default function Login() {
                           {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                         </button>
                       </div>
+                      {fieldErrors.confirmPassword && (
+                        <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.confirmPassword}</p>
+                      )}
                     </div>
                   )}
 
