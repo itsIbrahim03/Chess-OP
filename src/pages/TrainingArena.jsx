@@ -4,6 +4,7 @@ import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
 import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye, Loader2, Play, AlertTriangle, Shuffle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { translateError } from '../lib/errorTranslator';
 import {
     getNextPuzzle,
     getPuzzleById,
@@ -14,7 +15,7 @@ import {
     deletePuzzle
 } from '../services/puzzleService';
 import { incrementTotalSolved, getUserProfile } from '../services/userService';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { getBoardTheme } from '../lib/boardThemes';
 import { getPieceSet } from '../lib/pieceSets';
 
@@ -80,6 +81,7 @@ function getRecommendedPlaylist(playlists) {
 export default function TrainingArena() {
     const { user } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
     const boardRef = useRef(null);
     const cgRef = useRef(null);
     const chessRef = useRef(new Chess());
@@ -157,7 +159,7 @@ export default function TrainingArena() {
     // ─── On Mount: check for parameters and load decks ─────────────────
     useEffect(() => {
         if (!user) return;
-        const params = new URLSearchParams(window.location.search);
+        const params = new URLSearchParams(location.search);
         const specificId = params.get('puzzleId');
         const sessionParam = params.get('session');
         const playlistParam = params.get('playlistId');
@@ -242,6 +244,11 @@ export default function TrainingArena() {
                 setLoading(false);
             });
         } else {
+            setIsOneTime(false);
+            setSessionQueue([]);
+            setSessionResults([]);
+            setSessionFinished(false);
+            setCurrentPuzzle(null);
             setShowSelector(true);
             setLoading(false);
             setSelectorLoading(true);
@@ -260,7 +267,7 @@ export default function TrainingArena() {
                 setSelectorLoading(false);
             });
         }
-    }, [user]);
+    }, [user, location.search, location.key]);
 
     const getDueCount = (puzzles) => {
         if (!puzzles) return 0;
@@ -647,8 +654,7 @@ export default function TrainingArena() {
             // Proceed to the next puzzle in the session
             await loadNextPuzzle(false);
         } catch (e) {
-            console.error('Delete failed:', e);
-            setToastError('Failed to delete puzzle.');
+            setToastError(translateError(e));
             setTimeout(() => setToastError(null), 3000);
         }
     };
@@ -693,15 +699,11 @@ export default function TrainingArena() {
             await toggleFavorite(user.uid, puzzle.id, newFavState);
             setFavoritesCount(prev => newFavState ? prev + 1 : Math.max(0, prev - 1));
         } catch (e) {
-            console.error('toggleFavorite failed:', e.code, e.message);
             setIsFavorited(!newFavState);
             if (e.message === 'PLAYLISTS_FULL') {
                 setUnfavoriteToDelete(puzzle);
-            } else if (e.message === 'FAVORITES_LIMIT_EXCEEDED') {
-                setToastError('Favorites limit reached! Maximum 10 starred puzzles allowed.');
-                setTimeout(() => setToastError(null), 5000);
             } else {
-                setToastError(`Star failed: ${e.message}`);
+                setToastError(translateError(e));
                 setTimeout(() => setToastError(null), 5000);
             }
         } finally {
@@ -923,8 +925,8 @@ export default function TrainingArena() {
 
                     {/* Toast Error */}
                     {toastError && (
-                        <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm p-3 rounded-xl flex items-start gap-2">
-                            <span className="shrink-0 mt-0.5">⚠️</span>
+                        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm p-3 rounded-xl flex items-start gap-2.5 animate-in">
+                            <AlertTriangle className="shrink-0 mt-0.5" size={16} />
                             <span>{toastError}</span>
                         </div>
                     )}

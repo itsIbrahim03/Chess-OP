@@ -17,6 +17,7 @@ import { OpeningDetector } from '../lib/openingDetector';
 import { gameAnalyzer } from '../lib/gameAnalyzer';
 import ThemedDialog from '../components/ThemedDialog';
 import Toast from '../components/Toast';
+import { translateError } from '../lib/errorTranslator';
 
 export default function AnalysisBoard() {
     const { user } = useAuth();
@@ -25,6 +26,7 @@ export default function AnalysisBoard() {
     
     // Settings & Personalization
     const [lichessUsername, setLichessUsername] = useState('');
+    const [engineDepth, setEngineDepth] = useState(14);
     
     // Ingestion States
     const [timeControls, setTimeControls] = useState(['blitz', 'rapid', 'classical']);
@@ -86,7 +88,7 @@ export default function AnalysisBoard() {
                 setProgress(state.progress);
             } else {
                 if (state.results) setResults(state.results);
-                if (state.error) setIngestError(state.error);
+                if (state.error) setIngestError(translateError(state.error));
             }
         });
         return () => unsubscribe();
@@ -99,6 +101,9 @@ export default function AnalysisBoard() {
                 setLichessUsername(profile?.lichessUsername || '');
                 if (profile?.settings?.pieceSet) {
                     setPieceSet(profile.settings.pieceSet);
+                }
+                if (profile?.settings?.engineDepth) {
+                    setEngineDepth(profile.settings.engineDepth);
                 }
             }).catch(() => {});
 
@@ -261,8 +266,8 @@ export default function AnalysisBoard() {
                 opening: null
             };
 
-            // Analyze first 10 moves (depth 12 is fast and accurate)
-            const puzzles = await gameAnalyzer.analyze(game, savePuzzleColor, 12, remainingSpace);
+            // Analyze first 10 moves using the user's custom engine depth setting
+            const puzzles = await gameAnalyzer.analyze(game, savePuzzleColor, engineDepth, remainingSpace);
 
             if (puzzles.length === 0) {
                 setSaveStatus({ type: 'success', text: 'Analysis finished: No blunders found.' });
@@ -304,8 +309,21 @@ export default function AnalysisBoard() {
                 }
             }
         } catch (err) {
-            console.error('Manual game analysis failed:', err);
-            setSaveStatus({ type: 'error', text: `Analysis failed: ${err.message}` });
+            const translated = translateError(err);
+            if (err.message === 'REPERTOIRE_LIMIT_EXCEEDED' || translated.includes('Repertoire Capacity Reached')) {
+                setConfirmConfig({
+                    show: true,
+                    title: 'Repertoire Capacity Reached',
+                    message: 'Your deck is currently capped at its maximum limit of 70 unique positions. Please review, master, or delete existing blunders before importing new ones.',
+                    type: 'error',
+                    confirmText: 'OK',
+                    onConfirm: () => setConfirmConfig({ show: false, title: '', message: '', type: 'info' }),
+                    onCancel: () => setConfirmConfig({ show: false, title: '', message: '', type: 'info' })
+                });
+                setSaveStatus({ type: '', text: '' });
+            } else {
+                setSaveStatus({ type: 'error', text: translated });
+            }
         } finally {
             setAnalyzing(false);
         }
@@ -320,8 +338,7 @@ export default function AnalysisBoard() {
             setSaveStatus({ type: 'success', text: 'Pending puzzles discarded.' });
             setTimeout(() => setSaveStatus({ type: '', text: '' }), 3000);
         } catch (err) {
-            console.error('Failed to clear pending puzzles:', err);
-            setSaveStatus({ type: 'error', text: 'Failed to discard puzzles. Please try again.' });
+            setSaveStatus({ type: 'error', text: translateError(err) });
             setTimeout(() => setSaveStatus({ type: '', text: '' }), 3000);
         }
     };
@@ -696,7 +713,7 @@ export default function AnalysisBoard() {
                                     saveStatus.type === 'success'
                                         ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-450'
                                         : saveStatus.type === 'error'
-                                            ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                                            ? 'bg-rose-500/10 border-rose-500/20 text-rose-400'
                                             : 'bg-white/5 border-white/10 text-chess-text-secondary'
                                 }`}>
                                     <span>{saveStatus.text}</span>
@@ -822,7 +839,7 @@ export default function AnalysisBoard() {
                                 saveStatus.type === 'success'
                                     ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-450'
                                     : saveStatus.type === 'error'
-                                        ? 'bg-red-500/10 border-red-500/20 text-red-400'
+                                        ? 'bg-rose-500/10 border-rose-500/20 text-rose-400'
                                         : 'bg-white/5 border-white/10 text-chess-text-secondary'
                             }`}>
                                 <span>{saveStatus.text}</span>

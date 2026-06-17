@@ -29,6 +29,8 @@ import {
     deleteField
 } from 'firebase/firestore';
 
+import { getLevelInfo } from '../lib/xpHelpers';
+
 /**
  * Normalize puzzle field names for backward compatibility.
  * The gameAnalyzer originally output openingName/tags/playerColor,
@@ -168,13 +170,6 @@ export async function saveNewPuzzles(userId, newPuzzles) {
 
     await saveBatch.commit();
     await enforcePlaylistLimits(userId);
-
-    // Update lastScan and stats in user profile
-    const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, {
-        lastScan: serverTimestamp(),
-        'stats.totalGamesAnalyzed': increment(1)
-    });
 
     const finalSnapshot = await getDocs(query(
         collection(db, 'puzzles'),
@@ -417,21 +412,11 @@ export async function updatePuzzleReview(userId, puzzleId, success, timeTaken) {
             const userData = userSnap.data();
             const currentXp = userData.stats?.xp !== undefined ? userData.stats.xp : 0;
             const newXp = currentXp + xpAwarded;
-            const newLevel = Math.floor(newXp / 100) + 1;
-            
-            const currentTotalReviews = userData.stats?.totalReviews !== undefined ? userData.stats.totalReviews : 0;
-            const currentCorrectReviews = userData.stats?.totalCorrectReviews !== undefined ? userData.stats.totalCorrectReviews : 0;
-            
-            const newTotalReviews = currentTotalReviews + 1;
-            const newCorrectReviews = currentCorrectReviews + (success ? 1 : 0);
-            const reviewAccuracy = Math.round((newCorrectReviews / newTotalReviews) * 100);
+            const newLevel = getLevelInfo(newXp).level;
             
             await updateDoc(userRef, {
                 'stats.xp': newXp,
-                'stats.level': newLevel,
-                'stats.totalReviews': newTotalReviews,
-                'stats.totalCorrectReviews': newCorrectReviews,
-                'stats.reviewAccuracy': reviewAccuracy
+                'stats.level': newLevel
             });
         }
     }
@@ -546,7 +531,10 @@ export async function getUserPuzzleStats(userId) {
         stats.byStatus[data.status] = (stats.byStatus[data.status] || 0) + 1;
     });
 
-    return stats;
+    return {
+        ...stats,
+        puzzles: allPuzzles.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+    };
 }
 
 /**
@@ -1356,6 +1344,12 @@ export async function approvePendingPuzzle(userId, puzzleToSave, puzzlesList, in
         batch.set(puzzleRef, {
             fen: puzzleToSave.fen,
             correctMove: puzzleToSave.correctMove,
+            playerMove: puzzleToSave.playerMove || null,
+            playedSan: puzzleToSave.playedSan || null,
+            evaluation: puzzleToSave.evaluation !== undefined ? puzzleToSave.evaluation : null,
+            bestEvaluation: puzzleToSave.bestEvaluation !== undefined ? puzzleToSave.bestEvaluation : null,
+            evalLoss: puzzleToSave.evalLoss !== undefined ? puzzleToSave.evalLoss : null,
+            gameUrl: puzzleToSave.gameUrl || null,
             customName: puzzleToSave.customName || 'Blunder Position',
             opening: puzzleToSave.opening || puzzleToSave.openingName || 'Unknown Opening',
             theme: puzzleToSave.theme || 'Blunder',

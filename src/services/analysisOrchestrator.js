@@ -136,7 +136,8 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
                 });
 
                 // Analyze game with Stockfish
-                const puzzles = await gameAnalyzer.analyze(game, lichessUsername === game.players?.white?.user?.name ? 'white' : 'black', engineDepth);
+                const isUserWhite = lichessUsername?.trim().toLowerCase() === game.players?.white?.user?.name?.trim().toLowerCase();
+                const puzzles = await gameAnalyzer.analyze(game, isUserWhite ? 'white' : 'black', engineDepth);
 
                 if (puzzles && puzzles.length > 0) {
                     const remainingSpace = maxNewPuzzlesAllowed - puzzlesCount;
@@ -262,7 +263,8 @@ export async function quickAnalyze(userId, onProgress = () => { }) {
         }
 
         onProgress({ stage: 'Analyzing game...', progress: 50 });
-        const puzzles = await gameAnalyzer.analyze(game, lichessUsername === game.players?.white?.user?.name ? 'white' : 'black', engineDepth);
+        const isUserWhite = lichessUsername?.trim().toLowerCase() === game.players?.white?.user?.name?.trim().toLowerCase();
+        const puzzles = await gameAnalyzer.analyze(game, isUserWhite ? 'white' : 'black', engineDepth);
 
         if (puzzles && puzzles.length > 0) {
             const puzzlesWithGameId = puzzles.map(puzzle => ({

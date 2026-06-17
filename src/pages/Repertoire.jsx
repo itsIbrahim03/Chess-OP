@@ -22,6 +22,8 @@ import {
 } from '../services/puzzleService';
 import { useNavigate } from 'react-router-dom';
 import ThemedDialog from '../components/ThemedDialog';
+import Toast from '../components/Toast';
+import { translateError } from '../lib/errorTranslator';
 
 const getOpeningIcon = (title) => {
     let hash = 0;
@@ -270,9 +272,7 @@ export default function Repertoire() {
             setToast({ message: 'Puzzle renamed successfully!', type: 'success' });
             setTimeout(() => setToast(null), 3000);
         } catch (e) {
-            console.error('Rename failed:', e);
-            setToast({ message: 'Failed to rename puzzle.', type: 'error' });
-            setTimeout(() => setToast(null), 3000);
+            setToast({ message: translateError(e), type: 'error' });
         } finally {
             setRenaming(false);
         }
@@ -308,9 +308,7 @@ export default function Repertoire() {
             setToast({ message: 'Playlist renamed successfully!', type: 'success' });
             setTimeout(() => setToast(null), 3000);
         } catch (e) {
-            console.error('Playlist rename failed:', e);
-            setToast({ message: 'Failed to rename playlist.', type: 'error' });
-            setTimeout(() => setToast(null), 3000);
+            setToast({ message: translateError(e), type: 'error' });
         } finally {
             setRenamingPlaylist(false);
         }
@@ -327,9 +325,7 @@ export default function Repertoire() {
             setToast({ message: 'Puzzle moved successfully!', type: 'success' });
             setTimeout(() => setToast(null), 3000);
         } catch (e) {
-            console.error('Move puzzle failed:', e);
-            setToast({ message: 'Failed to move puzzle.', type: 'error' });
-            setTimeout(() => setToast(null), 3000);
+            setToast({ message: translateError(e), type: 'error' });
         } finally {
             setMovingState(false);
         }
@@ -342,8 +338,7 @@ export default function Repertoire() {
         if (newFavState) {
             // Enforce favorites capacity limit
             if (favPuzzles.length >= 10) {
-                setToast({ message: 'Favorites limit reached! Maximum 10 starred puzzles allowed.', type: 'error' });
-                setTimeout(() => setToast(null), 5000);
+                setToast({ message: translateError('FAVORITES_LIMIT_EXCEEDED'), type: 'error' });
                 return;
             }
         } else {
@@ -363,18 +358,12 @@ export default function Repertoire() {
                 message: newFavState ? 'Added to Favorites! (Limit 10)' : 'Removed from Favorites.',
                 type: 'success'
             });
-            setTimeout(() => setToast(null), 3000);
             await loadRepertoire();
         } catch (e) {
-            console.error('Favorite toggle failed:', e);
             if (e.message === 'PLAYLISTS_FULL') {
                 setUnfavoriteToDelete(puzzle);
-            } else if (e.message === 'FAVORITES_LIMIT_EXCEEDED') {
-                setToast({ message: 'Favorites limit reached! Maximum 10 starred puzzles allowed.', type: 'error' });
-                setTimeout(() => setToast(null), 5000);
             } else {
-                setToast({ message: 'Failed to update favorite status.', type: 'error' });
-                setTimeout(() => setToast(null), 3000);
+                setToast({ message: translateError(e), type: 'error' });
             }
         }
     };
@@ -386,12 +375,9 @@ export default function Repertoire() {
             setFavPuzzles(prev => prev.filter(p => p.id !== unfavoriteToDelete.id));
             setUnfavoriteToDelete(null);
             setToast({ message: 'Puzzle permanently deleted since playlists are full.', type: 'success' });
-            setTimeout(() => setToast(null), 3000);
             await loadRepertoire();
         } catch (e) {
-            console.error('Delete failed:', e);
-            setToast({ message: 'Failed to delete puzzle.', type: 'error' });
-            setTimeout(() => setToast(null), 3000);
+            setToast({ message: translateError(e), type: 'error' });
         }
     };
 
@@ -434,11 +420,8 @@ export default function Repertoire() {
                         }));
                     }
                     setToast({ message: 'Puzzle deleted successfully!', type: 'success' });
-                    setTimeout(() => setToast(null), 3000);
                 } catch (e) {
-                    console.error('Delete puzzle failed:', e);
-                    setToast({ message: 'Failed to delete puzzle.', type: 'error' });
-                    setTimeout(() => setToast(null), 3000);
+                    setToast({ message: translateError(e), type: 'error' });
                 }
             },
             null,
@@ -456,11 +439,8 @@ export default function Repertoire() {
             setPlaylistToDelete(null);
             await loadRepertoire();
             setToast({ message: 'Playlist cleared and removed successfully!', type: 'success' });
-            setTimeout(() => setToast(null), 4000);
         } catch (e) {
-            console.error('Playlist delete failed:', e);
-            setToast({ message: 'Failed to delete playlist.', type: 'error' });
-            setTimeout(() => setToast(null), 3000);
+            setToast({ message: translateError(e), type: 'error' });
         } finally {
             setClearingPlaylist(false);
         }
@@ -477,7 +457,6 @@ export default function Repertoire() {
         const existingCount = groups.filter(g => typeof g.playlistIndex === 'number').length;
         if (existingCount >= 3) {
             setToast({ message: 'Maximum 3 playlists allowed. Delete an existing playlist first.', type: 'error' });
-            setTimeout(() => setToast(null), 4000);
             return;
         }
         setNewPlaylistName('');
@@ -493,11 +472,8 @@ export default function Repertoire() {
             setShowCreateModal(false);
             setNewPlaylistName('');
             setToast({ message: `Playlist "${newPlaylistName.trim()}" created successfully!`, type: 'success' });
-            setTimeout(() => setToast(null), 3500);
         } catch (e) {
-            console.error('Failed to create playlist:', e);
-            setToast({ message: 'Failed to create playlist.', type: 'error' });
-            setTimeout(() => setToast(null), 3000);
+            setToast({ message: translateError(e), type: 'error' });
         } finally {
             setCreatingPlaylist(false);
         }
@@ -636,11 +612,12 @@ export default function Repertoire() {
 
                 {/* Dynamic Toast Alerts */}
                 {toast && (
-                    <div className={`fixed top-4 right-4 z-50 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2 backdrop-blur-md transition-all duration-300 ${toast.type === 'success' ? 'bg-emerald-500/90 shadow-emerald-500/10' : 'bg-red-500/90 animate-bounce shadow-red-500/10'
-                        }`}>
-                        {toast.type === 'success' ? <Check size={18} /> : <AlertTriangle size={18} />}
-                        <span className="font-bold text-sm">{toast.message}</span>
-                    </div>
+                    <Toast
+                        message={toast.message}
+                        type={toast.type}
+                        onClose={() => setToast(null)}
+                        className="bottom-24 right-6"
+                    />
                 )}
 
                 {/* Header */}
