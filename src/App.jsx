@@ -6,7 +6,6 @@ import Dashboard from "./pages/Dashboard";
 import Repertoire from "./pages/Repertoire";
 import Settings from "./pages/Settings";
 import TrainingArena from "./pages/TrainingArena";
-import ChessgroundTest from "./pages/ChessgroundTest";
 import Onboarding from "./pages/Onboarding";
 import AnalysisBoard from "./pages/AnalysisBoard";
 
@@ -78,14 +77,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/dashboard/test-board"
-            element={
-              <ProtectedRoute>
-                <ChessgroundTest />
-              </ProtectedRoute>
-            }
-          />
+
         </Routes>
       </AuthProvider>
     </BrowserRouter>

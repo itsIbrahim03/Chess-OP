@@ -21,6 +21,7 @@ import {
     AlertCircle
 } from 'lucide-react';
 import { backgroundAnalysisService } from '../services/backgroundAnalysisService';
+import { getLevelInfo } from '../lib/xpHelpers';
 import IngestionWizard from './IngestionWizard';
 
 export default function DashboardLayout({ children }) {
@@ -139,6 +140,7 @@ export default function DashboardLayout({ children }) {
         'target': '🎯', 'star': '⭐', 'diamond': '💎', 'rocket': '🚀', 'shield': '🛡️',
     };
     const flairEmoji = profileData?.flair && profileData.flair !== 'none' ? FLAIR_MAP[profileData.flair] : null;
+    const levelInfo = getLevelInfo(profileData?.stats?.xp || 0);
 
     // Persist sidebar state in localStorage
     const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -276,7 +278,7 @@ export default function DashboardLayout({ children }) {
                                         <span className="truncate">{profileData?.displayName || user?.displayName || 'Player'}</span>
                                         {flairEmoji && <span className="ml-0.5 text-xs inline-block shrink-0">{flairEmoji}</span>}
                                     </p>
-                                    <p className="text-xs text-chess-text-secondary truncate">{user?.email}</p>
+                                    <p className="text-xs text-chess-text-secondary truncate">Level {levelInfo.level} · {levelInfo.rank}</p>
                                 </div>
                             )}
 
