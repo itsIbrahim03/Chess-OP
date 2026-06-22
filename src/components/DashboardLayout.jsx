@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, collection, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
     LayoutDashboard,
@@ -29,6 +29,20 @@ export default function DashboardLayout({ children }) {
     const navigate = useNavigate();
     const location = useLocation();
     const [profileData, setProfileData] = useState(null);
+    const [puzzlesCount, setPuzzlesCount] = useState(0);
+
+    useEffect(() => {
+        if (!user) return;
+        
+        const q = query(collection(db, 'puzzles'), where('userId', '==', user.uid));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setPuzzlesCount(snapshot.size);
+        }, (err) => {
+            console.error('Failed to listen to puzzles count:', err);
+        });
+        
+        return () => unsubscribe();
+    }, [user]);
 
     // Background scan status states
     const [analysisState, setAnalysisState] = useState({
@@ -316,11 +330,27 @@ export default function DashboardLayout({ children }) {
                         <button className="p-2 hover:bg-white/5 rounded-lg lg:hidden text-white">
                             <Menu size={24} />
                         </button>
-                        <h2 className="text-xl font-bold text-white hidden sm:block">{getHeaderTitle()}</h2>
+                        <h1 className="text-xl font-bold text-white hidden sm:block">{getHeaderTitle()}</h1>
                     </div>
 
                     <div className="flex items-center gap-6">
-                        {/* Search and notification bell removed */}
+                        {/* Repertoire Capacity Counter */}
+                        {user && (
+                            <div className="flex items-center gap-3 select-none mr-2">
+                                <span className="text-[12px] font-bold text-white/60 tracking-widest uppercase">
+                                    Repertoire Deck
+                                </span>
+                                <div className="h-4 w-[1px] bg-white/15" />
+                                <div className="flex items-baseline gap-0.5">
+                                    <span className={`text-xl font-black tracking-tight leading-none ${puzzlesCount >= 70 ? "text-rose-400 animate-pulse" : "text-white"}`}>
+                                        {puzzlesCount}
+                                    </span>
+                                    <span className="text-s font-bold text-white/40">
+                                        /70
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </header>
 

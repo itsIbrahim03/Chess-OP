@@ -380,7 +380,7 @@ export default function AnalysisBoard() {
                             <Cpu size={22} className="animate-pulse" />
                         </div>
                         <div>
-                            <h1 className="text-3xl sm:text-3.5xl font-serif font-bold text-white tracking-wide">Analysis Manager</h1>
+                            <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white tracking-wide">Game Ingestion & Parsing</h2>
                             <p className="text-chess-text-secondary text-sm">Automate match scanning or ingest custom board states to build your repertoires.</p>
                         </div>
                     </div>
@@ -686,7 +686,7 @@ export default function AnalysisBoard() {
                                     </li>
                                     <li className="flex items-start gap-2">
                                         <span className="text-chess-accent select-none mt-0.5">•</span>
-                                        Stockfish runs client-side to find positions where you made a mistake (≥ 1.0 centipawn evaluation loss).
+                                        Stockfish runs in your browser to automatically analyze your games and identify mistakes.
                                     </li>
                                     <li className="flex items-start gap-2">
                                         <span className="text-chess-accent select-none mt-0.5">•</span>

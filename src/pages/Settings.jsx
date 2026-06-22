@@ -435,7 +435,7 @@ export default function Settings() {
             <div className="max-w-4xl pb-12">
                 {/* Header */}
                 <div className="mb-8">
-                    <h1 className="text-3xl font-serif font-bold text-white mb-2">Settings</h1>
+                    <h2 className="text-2xl font-serif font-bold text-white mb-2">User Profile & Preferences</h2>
                     <p className="text-chess-text-secondary">Manage your account, preferences, and board customization</p>
                 </div>
 
