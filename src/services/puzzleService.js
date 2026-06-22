@@ -338,7 +338,7 @@ export async function toggleFavorite(userId, puzzleId, isFavorite) {
 
 
 
-export async function updatePuzzleReview(userId, puzzleId, success, timeTaken) {
+export async function updatePuzzleReview(userId, puzzleId, outcome, timeTaken) {
     const puzzleRef = doc(db, 'puzzles', puzzleId);
 
     // Retrieve current puzzle document to get srsLevel
@@ -349,34 +349,59 @@ export async function updatePuzzleReview(userId, puzzleId, success, timeTaken) {
     const data = snap.data();
     const currentSrsLevel = data.srsLevel !== undefined ? data.srsLevel : 0;
     
-    let newSrsLevel = 0;
-    let nextDueDate = new Date(); // default to now
-    let status = 'active';
+    // Check if the puzzle is reviewed early (before its due date)
+    let isEarly = false;
+    if (data.nextDueDate) {
+        const dueMillis = data.nextDueDate.toMillis?.() || data.nextDueDate.seconds * 1000 || new Date(data.nextDueDate).getTime();
+        if (Date.now() < dueMillis) {
+            isEarly = true;
+        }
+    }
+    
+    let newSrsLevel = currentSrsLevel;
+    let nextDueDate = new Date();
+    let status = data.status || 'active';
+    let xpAwarded = 0;
+    const success = (outcome === 'success');
     
     const intervals = [1, 3, 7, 14, 30, 30]; // Level 0 to 5 intervals in days
     
     if (success) {
-        newSrsLevel = Math.min(5, currentSrsLevel + 1);
-        const days = intervals[newSrsLevel];
-        nextDueDate.setDate(nextDueDate.getDate() + days);
-        status = newSrsLevel === 5 ? 'mastered' : 'solved';
+        if (isEarly) {
+            // Practice Mode (Early success)
+            newSrsLevel = currentSrsLevel;
+            if (data.nextDueDate) {
+                nextDueDate = data.nextDueDate;
+            } else {
+                nextDueDate = new Date();
+            }
+            xpAwarded = 2; // Small practice reward
+            status = data.status || 'solved';
+        } else {
+            // Honest success (On time / Due)
+            newSrsLevel = Math.min(5, currentSrsLevel + 1);
+            const days = intervals[newSrsLevel];
+            nextDueDate.setDate(nextDueDate.getDate() + days);
+            status = newSrsLevel === 5 ? 'mastered' : 'solved';
+            
+            xpAwarded = 10; // Base solve XP
+            if (newSrsLevel > currentSrsLevel) {
+                xpAwarded += 20; // Level promotion bonus
+            }
+            if (newSrsLevel === 5 && currentSrsLevel < 5) {
+                xpAwarded += 50; // Mastery bonus
+            }
+        }
     } else {
-        newSrsLevel = 0;
-        nextDueDate.setDate(nextDueDate.getDate() + 1); // 1 day
+        // Penalty (soft or hard fail)
+        if (outcome === 'soft_fail') {
+            newSrsLevel = Math.max(0, currentSrsLevel - 1);
+        } else { // hard_fail
+            newSrsLevel = 0;
+        }
+        nextDueDate.setDate(nextDueDate.getDate() + 1); // tomorrow (1 day)
         status = 'active';
-    }
-    
-    // Calculate XP updates
-    let xpAwarded = 10; // Base solve XP
-    if (success) {
-        if (newSrsLevel > currentSrsLevel) {
-            xpAwarded += 20; // Level promotion bonus
-        }
-        if (newSrsLevel === 5 && currentSrsLevel < 5) {
-            xpAwarded += 50; // Mastery bonus
-        }
-    } else {
-        xpAwarded = 0; // No XP on failure
+        xpAwarded = 0;
     }
     
     // Append to attempt history (limit to 5)
@@ -405,7 +430,7 @@ export async function updatePuzzleReview(userId, puzzleId, success, timeTaken) {
     });
 
     // Update user document stats & XP
-    if (xpAwarded > 0 || success) {
+    if (xpAwarded > 0) {
         const userRef = doc(db, 'users', userId);
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {

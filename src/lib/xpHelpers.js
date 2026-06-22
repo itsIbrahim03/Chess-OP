@@ -27,7 +27,7 @@ export const getLevelInfo = (xp = 0) => {
     const xpNeeded = nextLevelXp - xpInLevel;
     const xpPercent = Math.min(100, Math.max(0, Math.round((xpInLevel / nextLevelXp) * 100)));
     
-    let rank = 'Pawn Scout';
+    let rank = 'Novice Pawn';
     let badgeEmoji = '♙';
     let rankColor = 'text-slate-400';
     let badgeBg = 'bg-slate-500/10 border-slate-500/20';
@@ -38,22 +38,22 @@ export const getLevelInfo = (xp = 0) => {
         rankColor = 'text-red-400';
         badgeBg = 'bg-red-500/10 border-red-500/20';
     } else if (level >= 20) {
-        rank = 'Queen Tactician';
+        rank = 'Outstanding Queen';
         badgeEmoji = '♕';
         rankColor = 'text-fuchsia-400';
         badgeBg = 'bg-fuchsia-500/10 border-fuchsia-500/20';
     } else if (level >= 10) {
-        rank = 'Rook General';
+        rank = 'Fearless Rook';
         badgeEmoji = '♖';
         rankColor = 'text-amber-400';
         badgeBg = 'bg-amber-500/10 border-amber-500/20';
     } else if (level >= 5) {
-        rank = 'Bishop Adept';
+        rank = 'Tactical Bishop';
         badgeEmoji = '♗';
         rankColor = 'text-emerald-400';
         badgeBg = 'bg-emerald-500/10 border-emerald-500/20';
     } else if (level >= 3) {
-        rank = 'Knight Errant';
+        rank = 'Skilled Knight';
         badgeEmoji = '♘';
         rankColor = 'text-cyan-400';
         badgeBg = 'bg-cyan-500/10 border-cyan-500/20';
