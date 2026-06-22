@@ -211,20 +211,22 @@ export default function Repertoire() {
         }
     }, []);
 
-    // Listen to expand=favorites query parameter to auto-unfold
+    // Listen to expand query parameter to auto-unfold playlists or favorites
     useEffect(() => {
         if (loading) return;
         const params = new URLSearchParams(window.location.search);
         const expandParam = params.get('expand');
-        if (expandParam === 'favorites') {
+        if (expandParam) {
             setExpandedGroups(prev => ({
                 ...prev,
-                favorites: true
+                [expandParam]: true
             }));
             setTimeout(() => {
-                const element = document.getElementById('favorites-card');
+                const element = document.getElementById(
+                    expandParam === 'favorites' ? 'favorites-card' : `playlist-card-${expandParam}`
+                );
                 if (element) {
-                    element.scrollIntoView({ behavior: 'smooth' });
+                    element.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             }, 300);
         }
@@ -265,6 +267,14 @@ export default function Repertoire() {
                         return p;
                     })
                 };
+            }));
+
+            // Update local favorites state optimistically
+            setFavPuzzles(prev => prev.map(p => {
+                if (p.id === puzzleId) {
+                    return { ...p, customName: renameValue.trim() };
+                }
+                return p;
             }));
 
             setEditingPuzzleId(null);
@@ -623,7 +633,7 @@ export default function Repertoire() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                     <div>
-                        <h1 className="text-3xl font-serif font-bold text-white mb-2">My Repertoire</h1>
+                        <h2 className="text-2xl font-serif font-bold text-white mb-2">Blunder Decks & Playlists</h2>
                         <p className="text-chess-text-secondary">
                             {viewMode === 'playlists'
                                 ? 'Organize your blunders into dynamic sequential training playlists of up to 20 puzzles each.'
@@ -779,6 +789,7 @@ export default function Repertoire() {
                             return (
                                 <div
                                     key={playlist.playlistIndex}
+                                    id={`playlist-card-${playlist.playlistIndex}`}
                                     className={`bg-chess-panel border border-white/5 rounded-2xl overflow-hidden transition-all duration-300 ${isExpanded ? 'ring-1 ring-chess-accent/30 shadow-2xl' : 'hover:border-white/10'
                                         }`}
                                 >
