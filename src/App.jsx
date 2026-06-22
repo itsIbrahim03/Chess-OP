@@ -8,10 +8,21 @@ import Settings from "./pages/Settings";
 import TrainingArena from "./pages/TrainingArena";
 import Onboarding from "./pages/Onboarding";
 import AnalysisBoard from "./pages/AnalysisBoard";
+import VerificationGate from "./pages/VerificationGate";
+import VerifyAction from "./pages/VerifyAction";
 
 // Wrapper component that redirects to login if user is not authenticated
-// This protects routes that require login
+// This protects routes that require login and email verification
 const ProtectedRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <Navigate to="/login" />;
+  if (!user.emailVerified) return <Navigate to="/verification-gate" replace />;
+  return children;
+};
+
+// Wrapper component for the waiting room to ensure the user is logged in
+const VerificationGateRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return <div>Loading...</div>;
   if (!user) return <Navigate to="/login" />;
@@ -26,6 +37,15 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
+          <Route
+            path="/verification-gate"
+            element={
+              <VerificationGateRoute>
+                <VerificationGate />
+              </VerificationGateRoute>
+            }
+          />
+          <Route path="/verify" element={<VerifyAction />} />
           <Route
             path="/onboarding"
             element={

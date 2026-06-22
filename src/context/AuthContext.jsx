@@ -9,7 +9,9 @@ import {
   browserSessionPersistence,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
-  updateProfile
+  updateProfile,
+  sendEmailVerification,
+  sendPasswordResetEmail
 } from "firebase/auth";
 import { initializeUserProfile, updateDailyStreak } from '../services/userService';
 
@@ -62,7 +64,20 @@ export const AuthProvider = ({ children }) => {
         displayName: displayName.trim()
       });
     }
+    // Automatically send email verification link
+    await sendEmailVerification(userCredential.user);
     return userCredential;
+  };
+
+  /**
+   * Send Password Reset Email.
+   */
+  const resetPassword = async (email) => {
+    const actionCodeSettings = {
+      url: `${window.location.origin}/verify`,
+      handleCodeInApp: true,
+    };
+    return sendPasswordResetEmail(auth, email, actionCodeSettings);
   };
 
   const logout = async () => {
@@ -92,7 +107,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, loginWithEmail, signupWithEmail, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, loginWithEmail, signupWithEmail, logout, resetPassword, loading }}>
       {!loading && children}
     </AuthContext.Provider>
   );
