@@ -36,8 +36,8 @@ function timeAgo(ts) {
 // ─── Greeting ─────────────────────────────────────────────────────────────────
 function greeting() {
   const h = new Date().getHours();
-  if (h < 12) return 'Good Morning';
-  if (h < 17) return 'Good Afternoon';
+  if (h >= 5 && h < 12) return 'Good Morning';
+  if (h >= 12 && h < 17) return 'Good Afternoon';
   return 'Good Evening';
 }
 
@@ -274,9 +274,9 @@ export default function Dashboard() {
 
       {/* Welcome */}
       <div className="mb-4">
-        <h1 className="text-3xl font-serif font-bold text-white mb-2">
+        <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white mb-2">
           {greeting()}, {firstName}
-        </h1>
+        </h2>
         {loading ? (
           <p className="text-chess-text-secondary">Loading your training data…</p>
         ) : newCount > 0 ? (
@@ -346,10 +346,10 @@ export default function Dashboard() {
             {levelInfo.badgeEmoji}
           </div>
           <div>
-            <h3 className="text-chess-text-secondary text-xs font-bold uppercase tracking-wider mb-2">Level & XP Progress</h3>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-3xl font-black text-white tracking-tight">Level {levelInfo.level}</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold border ${levelInfo.badgeBg} ${levelInfo.rankColor} flex items-center gap-1`}>
+            <h3 className="text-chess-text-secondary text-xs font-bold uppercase tracking-wider mb-1">Level & XP Progress</h3>
+            <div className="flex flex-col gap-0.5 mb-3">
+              <span className="text-3xl font-black text-white tracking-tight leading-none">Level {levelInfo.level}</span>
+              <span className="text-xs text-chess-accent font-bold tracking-wide flex items-center gap-1.5 mt-2">
                 <span>{levelInfo.badgeEmoji}</span>
                 <span>{levelInfo.rank}</span>
               </span>
@@ -536,7 +536,7 @@ export default function Dashboard() {
                           </div>
 
                           <button
-                            onClick={() => navigate('/dashboard/repertoire')}
+                            onClick={() => navigate(`/dashboard/repertoire?expand=${pl.playlistIndex}`)}
                             className="bg-white/5 hover:bg-chess-accent hover:text-white text-chess-text-secondary hover:shadow-inner text-xs px-3.5 py-2 rounded-xl transition-all duration-300 font-semibold flex items-center gap-1 w-fit cursor-pointer"
                           >
                             Manage <ArrowRight size={12} />

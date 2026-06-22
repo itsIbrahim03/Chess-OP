@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
@@ -78,12 +78,28 @@ function getRecommendedPlaylist(playlists) {
     return null;
 }
 
+// Fisher-Yates shuffle algorithm
+function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
+
 export default function TrainingArena() {
     const { user } = useAuth();
     const navigate = useNavigate();
     const location = useLocation();
     const boardRef = useRef(null);
     const cgRef = useRef(null);
+    const setBoardRef = useCallback((el) => {
+        boardRef.current = el;
+        if (!el) {
+            cgRef.current = null;
+        }
+    }, []);
     const chessRef = useRef(new Chess());
     const puzzleRef = useRef(null);
 
@@ -114,6 +130,13 @@ export default function TrainingArena() {
     // Hint and Solution tracking refs to avoid stale closures in chessground callbacks
     const hintUsedRef = useRef(false);
     const solutionUsedRef = useRef(false);
+    const hasFailedAttemptRef = useRef(false);
+    const hasLoggedResultRef = useRef(false);
+    const hasLoggedSessionResultRef = useRef(false);
+    const currentSessionIndexRef = useRef(0);
+    useEffect(() => {
+        currentSessionIndexRef.current = currentSessionIndex;
+    }, [currentSessionIndex]);
 
 
     // Playlist Selector state variables
@@ -165,13 +188,8 @@ export default function TrainingArena() {
         const playlistParam = params.get('playlistId');
         const openingParam = params.get('opening');
 
-        // Check onboarding status
-        const onboarded = localStorage.getItem('chess_op_srs_onboarded');
-        if (!onboarded) {
-            setOnboardStep(0);
-        } else {
-            setOnboardStep(null);
-        }
+        // Check onboarding status - disabled auto-launching guide on first mount
+        setOnboardStep(null);
 
         if (sessionParam === 'one-time') {
             setIsOneTime(true);
@@ -222,7 +240,8 @@ export default function TrainingArena() {
                 }
 
                 if (targetPuzzles.length > 0) {
-                    const sequentialIds = targetPuzzles.map(p => p.id);
+                    const shuffledPuzzles = shuffleArray(targetPuzzles);
+                    const sequentialIds = shuffledPuzzles.map(p => p.id);
                     
                     sessionStorage.setItem('oneTimePlaylist', JSON.stringify(sequentialIds));
                     sessionStorage.removeItem('oneTimeSessionResults');
@@ -233,6 +252,7 @@ export default function TrainingArena() {
                     setSessionResults([]);
                     setSessionFinished(false);
                     setShowSelector(false);
+                    setStats({ solved: 0, streak: 0 });
                     loadSpecificPuzzle(sequentialIds[0]);
                 } else {
                     setShowSelector(true);
@@ -306,8 +326,8 @@ export default function TrainingArena() {
                 selectedPuzzles = [...puzzles];
             } else {
                 // Shuffle candidate pools first
-                const shuffledDue = [...due].sort(() => 0.5 - Math.random());
-                const shuffledNonDue = [...nonDue].sort(() => 0.5 - Math.random());
+                const shuffledDue = shuffleArray(due);
+                const shuffledNonDue = shuffleArray(nonDue);
 
                 if (shuffledDue.length >= 7 && shuffledNonDue.length >= 3) {
                     // Scenario 1: Optimal Split (Standard Case)
@@ -328,12 +348,12 @@ export default function TrainingArena() {
             }
 
             // Shuffle final mixed deck to prevent due reviews from playing sequentially before non-due
-            const finalShuffled = [...selectedPuzzles].sort(() => 0.5 - Math.random());
+            const finalShuffled = shuffleArray(selectedPuzzles);
             selectedIds = finalShuffled.map(p => p.id);
         } else if (mode === 'random10') {
-            selectedIds = [...puzzles].sort(() => 0.5 - Math.random()).slice(0, 10).map(p => p.id);
+            selectedIds = shuffleArray(puzzles).slice(0, 10).map(p => p.id);
         } else {
-            selectedIds = puzzles.map(p => p.id);
+            selectedIds = shuffleArray(puzzles).map(p => p.id);
         }
 
         if (selectedIds.length === 0) return;
@@ -347,6 +367,7 @@ export default function TrainingArena() {
         setSessionResults([]);
         setSessionFinished(false);
         setShowSelector(false);
+        setStats({ solved: 0, streak: 0 });
         
         loadSpecificPuzzle(selectedIds[0]);
     };
@@ -414,9 +435,9 @@ export default function TrainingArena() {
         // Handle One-Time Session progression
         if (isOneTime && !retry) {
             if (currentPuzzle) {
-                const alreadyLogged = sessionResults.some(r => r.id === currentPuzzle.id);
+                const alreadyLogged = sessionResults.some(r => r.id === currentPuzzle.id) || hasLoggedSessionResultRef.current;
                 if (!alreadyLogged) {
-                    const outcome = (hintUsedRef.current || solutionUsedRef.current) ? 'assisted' : 'skipped';
+                    const outcome = (hintUsedRef.current || solutionUsedRef.current) ? 'assisted' : 'solved';
                     logSessionResult(currentPuzzle.id, outcome);
                 } else if (status !== 'success') {
                     if (hintUsedRef.current || solutionUsedRef.current || status === 'solution_revealed') {
@@ -424,7 +445,7 @@ export default function TrainingArena() {
                     }
                 }
             }
-            const nextIdx = currentSessionIndex + 1;
+            const nextIdx = currentSessionIndexRef.current + 1;
             if (nextIdx < sessionQueue.length) {
                 setCurrentSessionIndex(nextIdx);
                 await loadSpecificPuzzle(sessionQueue[nextIdx]);
@@ -474,12 +495,26 @@ export default function TrainingArena() {
         chessRef.current.load(normalized.fen);
         hintUsedRef.current = false;
         solutionUsedRef.current = false;
+        hasFailedAttemptRef.current = false;
+        hasLoggedResultRef.current = false;
+        hasLoggedSessionResultRef.current = false;
         return true;
     }
 
     const handleHint = () => {
         if (!currentPuzzle || !cgRef.current) return;
         hintUsedRef.current = true;
+        hasFailedAttemptRef.current = true;
+        
+        if (!hasLoggedResultRef.current) {
+            hasLoggedResultRef.current = true;
+            if (isOneTime) {
+                logSessionResult(currentPuzzle.id, 'assisted');
+            }
+            updatePuzzleReview(user.uid, currentPuzzle.id, 'soft_fail', 0)
+                .catch(e => console.warn('updatePuzzleReview failed:', e));
+        }
+        
         const bestMoveFrom = currentPuzzle.correctMove.substring(0, 2);
         cgRef.current.setShapes([{ orig: bestMoveFrom, brush: 'yellow' }]);
     };
@@ -487,9 +522,21 @@ export default function TrainingArena() {
     const handleShowSolution = () => {
         if (!currentPuzzle || !cgRef.current) return;
         solutionUsedRef.current = true;
-        if (isOneTime) {
-            logSessionResult(currentPuzzle.id, 'assisted');
+        hasFailedAttemptRef.current = true;
+        
+        if (!hasLoggedResultRef.current) {
+            hasLoggedResultRef.current = true;
+            if (isOneTime) {
+                logSessionResult(currentPuzzle.id, 'assisted');
+            }
+            updatePuzzleReview(user.uid, currentPuzzle.id, 'hard_fail', 0)
+                .catch(e => console.warn('updatePuzzleReview failed:', e));
+        } else {
+            if (isOneTime) {
+                logSessionResult(currentPuzzle.id, 'assisted');
+            }
         }
+        
         const bestMoveFrom = currentPuzzle.correctMove.substring(0, 2);
         const bestMoveTo = currentPuzzle.correctMove.substring(2, 4);
         cgRef.current.setShapes([
@@ -564,34 +611,39 @@ export default function TrainingArena() {
         if (!puzzle) return;
 
         const moves = chessRef.current.moves({ verbose: true });
+        const lastChar = puzzle.correctMove.slice(-1);
+        const promoChar = ['q', 'r', 'b', 'n'].includes(lastChar) ? lastChar : 'q';
         const isPromotion = moves.some(m => m.from === from && m.to === to && m.promotion);
-        const uciMove = from + to + (isPromotion ? 'q' : '');
+        const uciMove = from + to + (isPromotion ? promoChar : '');
         const isCorrect = uciMove === puzzle.correctMove;
 
         if (isCorrect) {
             setStatus('success');
-            chessRef.current.move({ from, to, promotion: 'q' });
+            chessRef.current.move({ from, to, promotion: promoChar });
 
             cgRef.current.set({
                 fen: chessRef.current.fen(),
                 movable: { color: null, dests: new Map() }
             });
-            setStats(prev => ({ solved: prev.solved + 1, streak: prev.streak + 1 }));
+            setStats(prev => ({ solved: prev.solved + 1, streak: hasFailedAttemptRef.current ? 0 : prev.streak + 1 }));
 
             if (isOneTime) {
                 const outcome = (hintUsedRef.current || solutionUsedRef.current) ? 'assisted' : 'solved';
                 logSessionResult(puzzle.id, outcome);
             }
 
-            try { await updatePuzzleReview(user.uid, puzzle.id, true, 0); }
-            catch (e) { console.warn('updatePuzzleReview failed:', e); }
+            if (!hasLoggedResultRef.current) {
+                hasLoggedResultRef.current = true;
+                try { await updatePuzzleReview(user.uid, puzzle.id, 'success', 0); }
+                catch (e) { console.warn('updatePuzzleReview failed:', e); }
 
-            try { await incrementTotalSolved(user.uid); }
-            catch (e) { console.warn('incrementTotalSolved failed:', e); }
+                try { await incrementTotalSolved(user.uid); }
+                catch (e) { console.warn('incrementTotalSolved failed:', e); }
+            }
 
             // Handle auto-next puzzle progression
             if (autoNext) {
-                const isLastInSession = isOneTime && (currentSessionIndex + 1 === sessionQueue.length);
+                const isLastInSession = isOneTime && (currentSessionIndexRef.current + 1 === sessionQueue.length);
                 if (isLastInSession) {
                     setSessionFinished(true);
                 } else {
@@ -602,21 +654,28 @@ export default function TrainingArena() {
         } else {
             setStatus('failure');
             setStats(prev => ({ ...prev, streak: 0 }));
+            hasFailedAttemptRef.current = true;
 
-            const bestMoveFrom = puzzle.correctMove.substring(0, 2);
-            const bestMoveTo = puzzle.correctMove.substring(2, 4);
-            cgRef.current.setShapes([
-                { orig: from, dest: to, brush: 'red' },
-                { orig: bestMoveFrom, dest: bestMoveTo, brush: 'green' }
-            ]);
+            const isHardFail = uciMove === puzzle.playerMove;
+            if (isHardFail) {
+                setToastError("Careful! You repeated your exact real-game blunder.");
+                setTimeout(() => setToastError(null), 5000);
+            }
+            
+            const outcome = isHardFail ? 'hard_fail' : 'soft_fail';
 
-            if (isOneTime) {
-                const outcome = (hintUsedRef.current || solutionUsedRef.current) ? 'assisted' : 'skipped';
-                logSessionResult(puzzle.id, outcome);
+            if (!hasLoggedResultRef.current) {
+                hasLoggedResultRef.current = true;
+                if (isOneTime) {
+                    logSessionResult(puzzle.id, 'assisted');
+                }
+                updatePuzzleReview(user.uid, puzzle.id, outcome, 0)
+                    .catch(e => console.warn('updatePuzzleReview failed:', e));
             }
 
-            try { await updatePuzzleReview(user.uid, puzzle.id, false, 0); }
-            catch (e) { console.warn('updatePuzzleReview failed:', e); }
+            cgRef.current.setShapes([
+                { orig: from, dest: to, brush: 'red' }
+            ]);
 
             setTimeout(() => {
                 cgRef.current.set({
@@ -632,6 +691,7 @@ export default function TrainingArena() {
 
     // Helper to log one-time results
     function logSessionResult(puzzleId, resultType) {
+        hasLoggedSessionResultRef.current = true;
         setSessionResults(prev => {
             if (prev.some(r => r.id === puzzleId)) {
                 return prev.map(r => r.id === puzzleId ? { ...r, result: resultType } : r);
@@ -720,26 +780,18 @@ export default function TrainingArena() {
         setSessionFinished(false);
         setCurrentSessionIndex(0);
         setShowSelector(true);
+        setStats({ solved: 0, streak: 0 });
     };
 
     // If one-time session completes, show dashboard
     if (sessionFinished) {
-        const totalCorrect = sessionResults.filter(r => {
-            const resType = r.result === true ? 'solved' : (r.result === false ? 'skipped' : r.result);
-            return resType === 'solved';
-        }).length;
+        const totalCorrect = sessionResults.filter(r => r.result === 'solved').length;
         const totalPuzzles = sessionQueue.length || 1;
-
-        const assistedCount = sessionResults.filter(r => {
-            const resType = r.result === true ? 'solved' : (r.result === false ? 'skipped' : r.result);
-            return resType === 'assisted';
-        }).length;
-        const skippedCount = Math.max(0, totalPuzzles - totalCorrect - assistedCount);
+        const assistedCount = sessionResults.filter(r => r.result === 'assisted').length;
 
         const C = 2 * Math.PI * 60;
         const solvedLen = (totalCorrect / totalPuzzles) * C;
         const assistedLen = (assistedCount / totalPuzzles) * C;
-        const skippedLen = (skippedCount / totalPuzzles) * C;
 
         return (
             <DashboardLayout>
@@ -753,7 +805,7 @@ export default function TrainingArena() {
                             <Award size={40} />
                         </div>
 
-                        <h1 className="text-3xl font-serif font-bold text-white mb-2">Session Completed!</h1>
+                        <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white mb-2">Session Completed!</h2>
                         <p className="text-chess-text-secondary text-sm mb-6 max-w-md">
                             Congratulations! You have completed your one-time 10-puzzle blitz run. Review your results below.
                         </p>
@@ -768,18 +820,6 @@ export default function TrainingArena() {
                                     className="stroke-white/5 fill-transparent"
                                     strokeWidth="8"
                                 />
-                                {skippedLen > 0 && (
-                                    <circle
-                                        cx="72"
-                                        cy="72"
-                                        r="60"
-                                        className="stroke-red-500/30 fill-transparent"
-                                        strokeWidth="8"
-                                        strokeDasharray={`${skippedLen} ${C}`}
-                                        strokeDashoffset={-(solvedLen + assistedLen)}
-                                        strokeLinecap="round"
-                                    />
-                                )}
                                 {assistedLen > 0 && (
                                     <circle
                                         cx="72"
@@ -815,7 +855,7 @@ export default function TrainingArena() {
                         <div className="w-full bg-black/20 border border-white/5 rounded-2xl p-4 max-h-[300px] overflow-y-auto mb-8 space-y-2 text-left">
                             <h3 className="text-xs uppercase tracking-wider font-bold text-chess-text-secondary mb-3 px-2">Puzzle-by-Puzzle Details</h3>
                             {sessionResults.map((r, i) => {
-                                const resType = r.result === true ? 'solved' : (r.result === false ? 'skipped' : r.result);
+                                const resType = r.result;
                                 return (
                                     <div key={i} className="flex items-center justify-between p-3 bg-white/[0.01] border border-white/5 rounded-xl">
                                         <div>
@@ -831,11 +871,6 @@ export default function TrainingArena() {
                                         {resType === 'assisted' && (
                                             <span className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold px-2.5 py-1 rounded-lg">
                                                 <HelpCircle size={13} /> Solved with Hint/Solution
-                                            </span>
-                                        )}
-                                        {resType === 'skipped' && (
-                                            <span className="flex items-center gap-1.5 bg-white/5 border border-white/10 text-white/40 text-xs font-bold px-2.5 py-1 rounded-lg">
-                                                <XCircle size={13} /> Skipped
                                             </span>
                                         )}
                                     </div>
@@ -872,7 +907,7 @@ export default function TrainingArena() {
 
     return (
         <DashboardLayout>
-            <div className="max-w-6xl mx-auto h-[calc(100vh-140px)] flex flex-col lg:flex-row gap-8">
+            <div className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-8">
 
                 {/* Board Column */}
                 <div className="flex-1 flex flex-col items-center justify-center gap-4">
@@ -892,7 +927,7 @@ export default function TrainingArena() {
                         </div>
                     )}
 
-                    <div className="w-full flex-1 flex items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl relative">
+                    <div className="w-full flex-1 flex flex-col items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl relative">
                         {/* Dynamic board theme + piece set CSS */}
                         <style>{`
                             .cg-wrap piece.white.pawn { background-image: url('${pieceSet.pieces.w.p}') !important; }
@@ -914,22 +949,21 @@ export default function TrainingArena() {
                             ${showCoordinates === false ? '.cg-wrap coords { display: none !important; }' : ''}
                         `}</style>
                         <div
-                            ref={boardRef}
+                            ref={setBoardRef}
                             className="w-full max-w-[600px] aspect-square rounded-lg shadow-2xl overflow-hidden"
                         />
+                        {/* Toast Error warning placed inside the board card, floating below it */}
+                        {toastError && (
+                            <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 bg-[#131a2e]/95 border border-rose-500/30 text-rose-450 text-sm py-3 px-6 rounded-2xl flex items-center gap-2.5 animate-in shadow-2xl backdrop-blur-md z-10 w-fit max-w-[90%] whitespace-nowrap font-bold">
+                                <AlertTriangle className="shrink-0 text-rose-450" size={16} />
+                                <span>{toastError}</span>
+                            </div>
+                        )}
                     </div>
                 </div>
 
                 {/* Sidebar Column */}
                 <div className="w-full lg:w-96 flex flex-col gap-4">
-
-                    {/* Toast Error */}
-                    {toastError && (
-                        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 text-sm p-3 rounded-xl flex items-start gap-2.5 animate-in">
-                            <AlertTriangle className="shrink-0 mt-0.5" size={16} />
-                            <span>{toastError}</span>
-                        </div>
-                    )}
 
                     {/* Status Card */}
                     <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl flex-1 flex flex-col items-center justify-center text-center space-y-4">
@@ -974,20 +1008,10 @@ export default function TrainingArena() {
                                     {status === 'solution_revealed' && <span className="text-yellow-450 flex items-center justify-center gap-2">Solution Revealed</span>}
                                 </h2>
 
-                                <p className="text-chess-text-secondary">
-                                    {currentPuzzle.rating ? `Rating: ${currentPuzzle.rating}` : 'Unrated Puzzle'}
-                                </p>
-
                                 {currentPuzzle.recurrentCount > 0 && (
                                     <div className="w-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs py-2.5 px-3 rounded-xl flex items-center justify-center gap-2 font-bold animate-pulse">
                                         <AlertTriangle size={14} className="text-amber-400 shrink-0" />
                                         <span>Recurrent Blunder (Failed in {currentPuzzle.recurrentCount} game scans)</span>
-                                    </div>
-                                )}
-
-                                {status === 'solution_revealed' && (
-                                    <div className="bg-white/5 border border-white/10 rounded-xl p-3 text-sm font-semibold text-white">
-                                        Solution: <span className="text-chess-accent font-mono font-bold tracking-wider">{currentPuzzle.correctMove.substring(0, 2)} → {currentPuzzle.correctMove.substring(2, 4)}</span>
                                     </div>
                                 )}
 
@@ -1014,7 +1038,7 @@ export default function TrainingArena() {
                                         </div>
                                     )}
 
-                                    {(status === 'failure' || status === 'solution_revealed') && (
+                                    {status === 'solution_revealed' && (
                                         <button
                                             type="button"
                                             onClick={handleDoAgain}
@@ -1025,7 +1049,7 @@ export default function TrainingArena() {
                                         </button>
                                     )}
 
-                                    {(status === 'success' || status === 'failure' || status === 'solution_revealed') && (
+                                    {(status === 'success' || status === 'solution_revealed') && (
                                         <button
                                             onClick={() => loadNextPuzzle(false)}
                                             className="w-full py-4 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all"
@@ -1065,7 +1089,7 @@ export default function TrainingArena() {
             {showSelector && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     {/* Backdrop */}
-                    <div className="absolute inset-0 bg-black/70 backdrop-blur-md cursor-pointer" onClick={() => navigate('/dashboard')} />
+                    <div className="absolute inset-0 bg-black/70 backdrop-blur-md" />
 
                     {/* Card Container */}
                     <div className="relative w-full max-w-2xl bg-chess-panel/95 backdrop-blur-2xl border border-white/10 rounded-3xl p-8 shadow-2xl">
@@ -1309,6 +1333,12 @@ export default function TrainingArena() {
                                             {activeTab === 'standard' ? (
                                                 <>
                                                     <button
+                                                        onClick={() => navigate('/dashboard')}
+                                                        className="py-3 px-6 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                                    >
+                                                        Back to Dashboard
+                                                    </button>
+                                                    <button
                                                         onClick={handleSelectRandom10}
                                                         disabled={(playlistsData || []).flatMap(p => p?.puzzles || []).length === 0 && favoritesCount === 0}
                                                         className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:-translate-y-0.5 cursor-pointer"
@@ -1326,36 +1356,37 @@ export default function TrainingArena() {
                                                     </button>
                                                 </>
                                             ) : (
-                                                <button
-                                                    onClick={() => {
-                                                        const allPuzzles = [
-                                                            ...(playlistsData || []).flatMap(p => p?.puzzles || []),
-                                                            ...favoritesList
-                                                        ];
-                                                        const uniquePuzzles = [];
-                                                        const seen = new Set();
-                                                        allPuzzles.forEach(p => {
-                                                            if (!seen.has(p.id)) {
-                                                                seen.add(p.id);
-                                                                uniquePuzzles.push(p);
-                                                            }
-                                                        });
-                                                        handleSelectPlaylist('all-srs', uniquePuzzles, 'srs');
-                                                    }}
-                                                    disabled={(playlistsData || []).flatMap(p => p?.puzzles || []).length === 0 && favoritesCount === 0}
-                                                    className="flex-1 py-3 bg-chess-accent hover:bg-chess-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:-translate-y-0.5 cursor-pointer"
-                                                >
-                                                    <ClipboardList size={16} />
-                                                    Train All SRS Queue
-                                                </button>
+                                                <>
+                                                    <button
+                                                        onClick={() => navigate('/dashboard')}
+                                                        className="py-3 px-6 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer"
+                                                    >
+                                                        Back to Dashboard
+                                                    </button>
+                                                    <button
+                                                        onClick={() => {
+                                                            const allPuzzles = [
+                                                                ...(playlistsData || []).flatMap(p => p?.puzzles || []),
+                                                                ...favoritesList
+                                                            ];
+                                                            const uniquePuzzles = [];
+                                                            const seen = new Set();
+                                                            allPuzzles.forEach(p => {
+                                                                if (!seen.has(p.id)) {
+                                                                    seen.add(p.id);
+                                                                    uniquePuzzles.push(p);
+                                                                }
+                                                            });
+                                                            handleSelectPlaylist('all-srs', uniquePuzzles, 'srs');
+                                                        }}
+                                                        disabled={(playlistsData || []).flatMap(p => p?.puzzles || []).length === 0 && favoritesCount === 0}
+                                                        className="flex-1 py-3 bg-chess-accent hover:bg-chess-accent-hover disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 hover:-translate-y-0.5 cursor-pointer"
+                                                    >
+                                                        <ClipboardList size={16} />
+                                                        Train All SRS Queue
+                                                    </button>
+                                                </>
                                             )}
-                                            
-                                            <button
-                                                onClick={() => navigate('/dashboard')}
-                                                className="py-3 px-6 bg-white/5 hover:bg-white/10 border border-white/10 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 cursor-pointer"
-                                            >
-                                                Back to Dashboard
-                                            </button>
                                         </div>
                                     </div>
                                 )}
