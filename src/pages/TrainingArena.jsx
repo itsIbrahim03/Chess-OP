@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { Chessground } from 'chessground';
 import { Chess } from 'chess.js';
 import DashboardLayout from '../components/DashboardLayout';
-import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye, Loader2, Play, AlertTriangle, Shuffle } from 'lucide-react';
+import { ArrowRight, Target, CheckCircle2, XCircle, Star, Award, RotateCcw, Home, ClipboardList, HelpCircle, Eye, Loader2, Play, AlertTriangle, Shuffle, Flame, Trophy } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { translateError } from '../lib/errorTranslator';
 import {
@@ -505,6 +505,7 @@ export default function TrainingArena() {
         if (!currentPuzzle || !cgRef.current) return;
         hintUsedRef.current = true;
         hasFailedAttemptRef.current = true;
+        setStats(prev => ({ ...prev, streak: 0 }));
         
         if (!hasLoggedResultRef.current) {
             hasLoggedResultRef.current = true;
@@ -523,6 +524,7 @@ export default function TrainingArena() {
         if (!currentPuzzle || !cgRef.current) return;
         solutionUsedRef.current = true;
         hasFailedAttemptRef.current = true;
+        setStats(prev => ({ ...prev, streak: 0 }));
         
         if (!hasLoggedResultRef.current) {
             hasLoggedResultRef.current = true;
@@ -625,7 +627,10 @@ export default function TrainingArena() {
                 fen: chessRef.current.fen(),
                 movable: { color: null, dests: new Map() }
             });
-            setStats(prev => ({ solved: prev.solved + 1, streak: hasFailedAttemptRef.current ? 0 : prev.streak + 1 }));
+            setStats(prev => ({ 
+                solved: solutionUsedRef.current ? prev.solved : prev.solved + 1, 
+                streak: hasFailedAttemptRef.current ? 0 : prev.streak + 1 
+            }));
 
             if (isOneTime) {
                 const outcome = (hintUsedRef.current || solutionUsedRef.current) ? 'assisted' : 'solved';
@@ -907,13 +912,13 @@ export default function TrainingArena() {
 
     return (
         <DashboardLayout>
-            <div className="max-w-6xl mx-auto flex flex-col lg:flex-row gap-8">
+            <div className="w-full max-w-6xl mx-auto flex flex-col lg:flex-row gap-8 items-center justify-center lg:h-[calc(100vh-144px)]">
 
                 {/* Board Column */}
-                <div className="flex-1 flex flex-col items-center justify-center gap-4">
+                <div className="flex-1 w-full flex flex-col items-center justify-center gap-4 min-w-0">
                     {/* Linear session progress bar at top */}
                     {isOneTime && (
-                        <div className="w-full max-w-[600px] bg-chess-panel border border-white/5 p-4 rounded-2xl flex flex-col gap-2 shadow-lg">
+                        <div className="w-full max-w-[min(100%,calc(100vh-280px))] bg-chess-panel border border-white/5 p-4 rounded-2xl flex flex-col gap-2 shadow-lg">
                             <div className="flex justify-between items-center text-xs text-chess-text-secondary font-bold uppercase tracking-wider">
                                 <span>One-Time Session</span>
                                 <span>Puzzle {currentSessionIndex + 1} of {sessionQueue.length}</span>
@@ -927,7 +932,7 @@ export default function TrainingArena() {
                         </div>
                     )}
 
-                    <div className="w-full flex-1 flex flex-col items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl relative">
+                    <div className="w-full max-w-[min(100%,calc(100vh-280px))] h-fit flex flex-col items-center justify-center p-4 bg-chess-panel border border-white/5 rounded-2xl relative">
                         {/* Dynamic board theme + piece set CSS */}
                         <style>{`
                             .cg-wrap piece.white.pawn { background-image: url('${pieceSet.pieces.w.p}') !important; }
@@ -950,23 +955,16 @@ export default function TrainingArena() {
                         `}</style>
                         <div
                             ref={setBoardRef}
-                            className="w-full max-w-[600px] aspect-square rounded-lg shadow-2xl overflow-hidden"
+                            className="w-full aspect-square rounded-lg shadow-2xl overflow-hidden"
                         />
-                        {/* Toast Error warning placed inside the board card, floating below it */}
-                        {toastError && (
-                            <div className="absolute -bottom-12 left-1/2 -translate-x-1/2 bg-[#131a2e]/95 border border-rose-500/30 text-rose-450 text-sm py-3 px-6 rounded-2xl flex items-center gap-2.5 animate-in shadow-2xl backdrop-blur-md z-10 w-fit max-w-[90%] whitespace-nowrap font-bold">
-                                <AlertTriangle className="shrink-0 text-rose-450" size={16} />
-                                <span>{toastError}</span>
-                            </div>
-                        )}
                     </div>
                 </div>
 
                 {/* Sidebar Column */}
-                <div className="w-full lg:w-96 flex flex-col gap-4">
+                <div className="w-full lg:w-[400px] lg:max-w-[400px] h-fit flex flex-col gap-4">
 
                     {/* Status Card */}
-                    <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl flex-1 flex flex-col items-center justify-center text-center space-y-4">
+                    <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl h-fit flex flex-col items-center justify-center text-center space-y-4">
                         {loading ? (
                             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-chess-accent"></div>
                         ) : currentPuzzle ? (
@@ -1071,16 +1069,34 @@ export default function TrainingArena() {
                     <div className="bg-chess-panel border border-white/5 p-6 rounded-2xl">
                         <h3 className="text-sm font-bold text-chess-text-secondary uppercase mb-4">Session Stats</h3>
                         <div className="grid grid-cols-2 gap-4">
-                            <div className="p-3 bg-white/5 rounded-lg">
-                                <div className="text-2xl font-bold text-white">{stats.solved}</div>
-                                <div className="text-xs text-chess-text-secondary">Solved</div>
+                            <div className="p-3 bg-white/5 rounded-xl flex items-center gap-3">
+                                <div className="p-2 bg-white/5 rounded-lg text-chess-accent shrink-0">
+                                    <Trophy size={18} />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="text-2xl font-bold text-white leading-none mb-1">{stats.solved}</div>
+                                    <div className="text-xs text-chess-text-secondary">Solved</div>
+                                </div>
                             </div>
-                            <div className="p-3 bg-white/5 rounded-lg">
-                                <div className="text-2xl font-bold text-green-400">{stats.streak}</div>
-                                <div className="text-xs text-chess-text-secondary">Streak</div>
+                            <div className="p-3 bg-white/5 rounded-xl flex items-center gap-3">
+                                <div className="p-2 bg-white/5 rounded-lg text-orange-400 shrink-0">
+                                    <Flame size={18} />
+                                </div>
+                                <div className="min-w-0">
+                                    <div className="text-2xl font-bold text-green-400 leading-none mb-1">{stats.streak}</div>
+                                    <div className="text-xs text-chess-text-secondary">Streak</div>
+                                </div>
                             </div>
                         </div>
                     </div>
+
+                    {/* Toast Error warning placed under the session stats card */}
+                    {toastError && (
+                        <div className="w-full bg-[#131a2e]/95 border border-rose-500/30 text-rose-450 text-sm py-3.5 px-5 rounded-2xl flex items-center justify-center gap-2.5 animate-in shadow-2xl backdrop-blur-md z-10 font-bold text-center">
+                            <AlertTriangle className="shrink-0 text-rose-450" size={16} />
+                            <span>{toastError}</span>
+                        </div>
+                    )}
 
                 </div>
             </div>
