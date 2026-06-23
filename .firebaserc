@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "chess-op-45485"
-  }
+  },
+  "targets": {
+    "chess-op-45485": {
+      "hosting": {
+        "main": [
+          "chess-op-45485"
+        ],
+        "chessop": [
+          "chessop"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
