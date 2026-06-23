@@ -492,7 +492,7 @@ export async function pruneActivityLogs(userId) {
                 batch.delete(d.ref);
             });
             await batch.commit();
-            console.log(`Pruned ${docsToDelete.length} old activity logs for user ${userId}`);
+            console.info(`Pruned ${docsToDelete.length} old activity logs for user ${userId}`);
         }
     } catch (e) {
         console.warn('Failed to prune activity logs:', e);
@@ -1248,7 +1248,7 @@ export async function clearOldNewPuzzles(userId) {
                 batch.update(d.ref, { status: 'active' });
             });
             await batch.commit();
-            console.log(`Cleared 'new' status for ${snapshot.size} puzzles of user ${userId}`);
+            console.info(`Cleared 'new' status for ${snapshot.size} puzzles of user ${userId}`);
         }
     } catch (e) {
         console.warn('Failed to clear old new puzzles:', e);
@@ -1305,7 +1305,7 @@ export async function clearPendingPuzzles(userId) {
                         batch.delete(gameRef);
                     });
                     await batch.commit();
-                    console.log(`Deleted ${gameIds.length} processed games from history for user ${userId}`);
+                    console.info(`Deleted ${gameIds.length} processed games from history for user ${userId}`);
                 }
             }
         }

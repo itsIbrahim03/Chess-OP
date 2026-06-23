@@ -46,7 +46,7 @@ export class GameAnalyzer {
             for (let i = 0; i < maxPlies; i++) {
                 // Stop evaluating immediately if we hit our capacity limits
                 if (puzzles.length >= maxPuzzlesAllowed) {
-                    console.log(`Manual analysis stopped early: reached maximum puzzle limit (${maxPuzzlesAllowed})`);
+                    console.info(`Manual analysis stopped early: reached maximum puzzle limit (${maxPuzzlesAllowed})`);
                     break;
                 }
 

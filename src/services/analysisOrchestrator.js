@@ -120,7 +120,7 @@ export async function analyzeUserGames(userId, onProgress = () => { }, options =
         for (let i = 0; i < newGames.length; i++) {
             // Stop analyzing immediately if we hit our capacity limit
             if (puzzlesCount >= maxNewPuzzlesAllowed) {
-                console.log(`Scan stopped early: reached maximum playlist capacity space (${maxNewPuzzlesAllowed})`);
+                console.info(`Scan stopped early: reached maximum playlist capacity space (${maxNewPuzzlesAllowed})`);
                 break;
             }
 
