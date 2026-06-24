@@ -321,7 +321,7 @@ export default function Login() {
                   <div className="flex gap-4 mb-6 bg-chess-bg/90 p-1 rounded-xl border border-white/5 relative">
                     {/* Sliding background indicator */}
                     <div
-                      className="absolute top-1 bottom-1 rounded-lg bg-white/10 shadow-lg transition-all duration-300 ease-[cubic-bezier(0.25,1,0.5,1)]"
+                      className="absolute top-1 bottom-1 rounded-lg bg-white/10 shadow-lg transition-all duration-800 ease-[cubic-bezier(0.25,1,0.5,1)]"
                       style={{
                         left: isSignUp ? '50%' : '4px',
                         width: 'calc(50% - 4px)',
@@ -330,7 +330,7 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => { setIsSignUp(false); setError(null); setFieldErrors({}); setResetSuccessMessage(""); }}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-300 relative z-10 ${
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-800 relative z-10 ${
                         !isSignUp ? "text-white" : "text-chess-text-secondary hover:text-white"
                       }`}
                     >
@@ -339,7 +339,7 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => { setIsSignUp(true); setError(null); setFieldErrors({}); setResetSuccessMessage(""); }}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-300 relative z-10 ${
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-800 relative z-10 ${
                         isSignUp ? "text-white" : "text-chess-text-secondary hover:text-white"
                       }`}
                     >
@@ -372,7 +372,7 @@ export default function Login() {
                 <form onSubmit={handleEmailAuth} className="flex flex-col" noValidate>
                   {/* Full Name (Register only) */}
                   {isSignUp && !isForgotPassword && (
-                    <div className="transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden max-h-[100px] opacity-100 animate-in">
+                    <div className="transition-all duration-800 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden max-h-[100px] opacity-100 animate-in">
                       <div className="space-y-1 pb-0">
                         <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Full Name</label>
                         <div className="relative">
@@ -399,7 +399,7 @@ export default function Login() {
                   )}
 
                   {/* Email */}
-                  <div className={`transition-all duration-300 ${(isSignUp && !isForgotPassword) ? 'mt-3.5' : 'mt-0'}`}>
+                  <div className={`transition-all duration-800 ${(isSignUp && !isForgotPassword) ? 'mt-3.5' : 'mt-0'}`}>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Email Address</label>
                       <div className="relative">
@@ -425,7 +425,7 @@ export default function Login() {
                   </div>
 
                   {/* Password */}
-                  <div className={`transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isForgotPassword ? 'max-h-[100px] opacity-100 mt-3.5' : 'max-h-0 opacity-0 mt-0'}`}>
+                  <div className={`transition-all duration-800 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isForgotPassword ? 'max-h-[100px] opacity-100 mt-3.5' : 'max-h-0 opacity-0 mt-0'}`}>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Password</label>
                       <div className="relative">
@@ -459,7 +459,7 @@ export default function Login() {
 
                   {/* Password Strength Matrix (Register only) */}
                   {isSignUp && !isForgotPassword && (
-                    <div className="transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden max-h-[120px] opacity-100 mt-3 animate-in">
+                    <div className="transition-all duration-800 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden max-h-[120px] opacity-100 mt-3 animate-in">
                       <div className="grid grid-cols-2 gap-x-4 gap-y-2 pt-1 pb-1">
                         {criteria.map((item) => {
                           const met = passwordStrength[item.key];
@@ -487,7 +487,7 @@ export default function Login() {
 
                   {/* Confirm Password (Register only) */}
                   {isSignUp && !isForgotPassword && (
-                    <div className="transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden max-h-[120px] opacity-100 mt-3.5 animate-in">
+                    <div className="transition-all duration-800 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden max-h-[120px] opacity-100 mt-3.5 animate-in">
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Confirm Password</label>
                         <div className="relative">
@@ -521,7 +521,7 @@ export default function Login() {
                   )}
 
                   {/* Forgot Password Link (Sign In only) */}
-                  <div className={`flex justify-end transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isSignUp && !isForgotPassword ? 'max-h-[30px] opacity-100 mt-0.5' : 'max-h-0 opacity-0 mt-0'}`}>
+                  <div className={`flex justify-end transition-all duration-800 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isSignUp && !isForgotPassword ? 'max-h-[30px] opacity-100 mt-0.5' : 'max-h-0 opacity-0 mt-0'}`}>
                     <button
                       type="button"
                       onClick={() => { setIsForgotPassword(true); setError(null); setFieldErrors({}); setResetSuccessMessage(""); }}
