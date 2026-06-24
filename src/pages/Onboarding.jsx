@@ -19,25 +19,40 @@ export default function Onboarding() {
   const [lichessVerifyProfile, setLichessVerifyProfile] = useState(null);
   const verifyTimer = useRef(null);
 
-  const handleLichessChange = (val) => {
-    setLichessUsername(val);
+  const triggerLichessVerification = async (val) => {
     if (verifyTimer.current) clearTimeout(verifyTimer.current);
-    if (!val.trim()) {
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.length < 3) {
       setLichessVerifyState('idle');
       setLichessVerifyProfile(null);
       return;
     }
     setLichessVerifyState('loading');
-    verifyTimer.current = setTimeout(async () => {
-      try {
-        const result = await verifyLichessUsername(val);
-        setLichessVerifyState(result.valid ? 'valid' : 'invalid');
-        setLichessVerifyProfile(result.valid ? result.profile : null);
-      } catch {
-        setLichessVerifyState('invalid');
-        setLichessVerifyProfile(null);
-      }
-    }, 500);
+    try {
+      const result = await verifyLichessUsername(trimmed);
+      setLichessVerifyState(result.valid ? 'valid' : 'invalid');
+      setLichessVerifyProfile(result.valid ? result.profile : null);
+    } catch {
+      setLichessVerifyState('invalid');
+      setLichessVerifyProfile(null);
+    }
+  };
+
+  const handleLichessChange = (val) => {
+    setLichessUsername(val);
+    if (verifyTimer.current) clearTimeout(verifyTimer.current);
+    
+    const trimmed = val.trim();
+    if (!trimmed || trimmed.length < 3) {
+      setLichessVerifyState('idle');
+      setLichessVerifyProfile(null);
+      return;
+    }
+    
+    setLichessVerifyState('loading');
+    verifyTimer.current = setTimeout(() => {
+      triggerLichessVerification(val);
+    }, 1500);
   };
 
   const handleSubmit = async (e) => {
@@ -141,6 +156,7 @@ export default function Onboarding() {
                     type="text"
                     value={lichessUsername}
                     onChange={(e) => handleLichessChange(e.target.value)}
+                    onBlur={() => triggerLichessVerification(lichessUsername)}
                     placeholder="e.g. LichessGM"
                     className="w-full bg-chess-bg/80 border border-white/10 text-white rounded-xl py-3.5 px-4 pr-10 focus:outline-none focus:border-chess-accent/50 transition-colors"
                   />

@@ -209,6 +209,12 @@ export default function TrainingArena() {
                 loadNextPuzzle();
             }
         } else if (specificId) {
+            setIsOneTime(true);
+            setSessionQueue([specificId]);
+            setCurrentSessionIndex(0);
+            setSessionResults([]);
+            setSessionFinished(false);
+            setStats({ solved: 0, streak: 0 });
             loadSpecificPuzzle(specificId);
         } else if (playlistParam || openingParam) {
             setLoading(true);
@@ -818,7 +824,9 @@ export default function TrainingArena() {
 
                         <h2 className="text-2xl sm:text-3xl font-serif font-bold text-white mb-2">Session Completed!</h2>
                         <p className="text-chess-text-secondary text-sm mb-6 max-w-md">
-                            Congratulations! You have completed your one-time 10-puzzle blitz run. Review your results below.
+                            {totalPuzzles === 1 
+                                ? "You have completed your single puzzle review. Review your result below." 
+                                : `Congratulations! You have completed your one-time ${totalPuzzles}-puzzle run. Review your results below.`}
                         </p>
 
                         {/* Score summary Speed dial */}

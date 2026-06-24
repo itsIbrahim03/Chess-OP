@@ -408,11 +408,12 @@ export async function clearAllAccountData(userId) {
 
     // Reset user profile to defaults matching the database schema, removing all deprecated fields
     await updateDoc(userRef, {
-        lichessUsername: data.lichessUsername || '',
-        lichessConnectedAt: data.lichessConnectedAt || null,
-        country: 'PW',
-        flair: 'trophy',
-        photoUrl: data.photoUrl || '/pieces/cburnett/wN.svg',
+        lichessUsername: '',
+        lichessConnectedAt: null,
+        onboardingCompleted: false,
+        country: '',
+        flair: '',
+        photoUrl: null,
         playlistNames: {}, // Reset to empty map to allow creating custom playlists correctly
         showWelcomeTour: false,
         pendingScan: null,
@@ -438,7 +439,7 @@ export async function clearAllAccountData(userId) {
             showCoordinates: true,
             pieceSet: 'cburnett',
             autoNext: false,
-            minElo: 1450,
+            minElo: 1000,
             engineDepth: 14,
             boardTheme: 'classic'
         },

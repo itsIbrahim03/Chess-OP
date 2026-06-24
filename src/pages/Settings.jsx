@@ -49,27 +49,41 @@ function useLichessVerification() {
     const [verifyProfile, setVerifyProfile] = useState(null);
     const debounceTimer = useRef(null);
 
-    const verify = useCallback((username) => {
+    const verifyImmediate = useCallback(async (username) => {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
-
-        if (!username || !username.trim()) {
+        const trimmed = username ? username.trim() : '';
+        if (!trimmed || trimmed.length < 3) {
             setVerifyState('idle');
             setVerifyProfile(null);
             return;
         }
 
         setVerifyState('loading');
-        debounceTimer.current = setTimeout(async () => {
-            try {
-                const result = await verifyLichessUsername(username);
-                setVerifyState(result.valid ? 'valid' : 'invalid');
-                setVerifyProfile(result.valid ? result.profile : null);
-            } catch {
-                setVerifyState('invalid');
-                setVerifyProfile(null);
-            }
-        }, 500);
+        try {
+            const result = await verifyLichessUsername(trimmed);
+            setVerifyState(result.valid ? 'valid' : 'invalid');
+            setVerifyProfile(result.valid ? result.profile : null);
+        } catch {
+            setVerifyState('invalid');
+            setVerifyProfile(null);
+        }
     }, []);
+
+    const verify = useCallback((username) => {
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+
+        const trimmed = username ? username.trim() : '';
+        if (!trimmed || trimmed.length < 3) {
+            setVerifyState('idle');
+            setVerifyProfile(null);
+            return;
+        }
+
+        setVerifyState('loading');
+        debounceTimer.current = setTimeout(() => {
+            verifyImmediate(username);
+        }, 1500);
+    }, [verifyImmediate]);
 
     const reset = useCallback(() => {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
@@ -77,7 +91,7 @@ function useLichessVerification() {
         setVerifyProfile(null);
     }, []);
 
-    return { verifyState, verifyProfile, verify, reset };
+    return { verifyState, verifyProfile, verify, verifyImmediate, reset };
 }
 
 // ─── Mini Board Preview Component ───────────────────────────────────────
@@ -171,12 +185,13 @@ function ConfirmClearModal({ open, onClose, onConfirm, clearing }) {
                 </div>
 
                 <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 mb-6 text-sm text-chess-text-secondary space-y-1">
-                    <p>• All generated training puzzles</p>
-                    <p>• All analysed and processed games</p>
-                    <p>• Custom repertoire folders and lists</p>
-                    <p>• Active streaks and solve count history</p>
-                    <p>• Linked Lichess username connection</p>
-                    <p>• Custom settings preferences</p>
+                    <p>• All generated training puzzles (Deleted permanently)</p>
+                    <p>• All analysed and processed games (Deleted permanently)</p>
+                    <p>• All activity logs & stats (Deleted permanently)</p>
+                    <p>• Custom playlists & favorites (Reset to empty)</p>
+                    <p>• Linked Lichess username connection (Disconnected)</p>
+                    <p>• Level, XP, and streaks (Reset to Level 1, 0 XP)</p>
+                    <p>• Custom settings preferences (Reset to defaults)</p>
                 </div>
 
                 <div className="mb-6">
@@ -240,7 +255,7 @@ export default function Settings() {
 
     // Lichess
     const [lichessUsername, setLichessUsername] = useState('');
-    const { verifyState, verifyProfile, verify, reset: resetVerify } = useLichessVerification();
+    const { verifyState, verifyProfile, verify, verifyImmediate, reset: resetVerify } = useLichessVerification();
 
     // Profile
     const [displayName, setDisplayName] = useState('');
@@ -501,6 +516,7 @@ export default function Settings() {
                                         type="text"
                                         value={lichessUsername}
                                         onChange={handleLichessChange}
+                                        onBlur={() => verifyImmediate(lichessUsername)}
                                         placeholder="Enter Lichess username"
                                         className="w-full px-4 py-2 pr-10 bg-chess-bg border border-white/10 rounded-lg text-white placeholder:text-chess-text-secondary focus:outline-none focus:border-chess-accent transition-colors"
                                     />
