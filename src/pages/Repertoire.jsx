@@ -251,7 +251,10 @@ export default function Repertoire() {
     };
 
     const handleSaveRename = async (puzzleId) => {
-        if (!renameValue.trim()) return;
+        if (!renameValue.trim()) {
+            setToast({ message: 'Puzzle name cannot be blank', type: 'error' });
+            return;
+        }
         setRenaming(true);
         try {
             await renamePuzzle(user.uid, puzzleId, renameValue);
@@ -300,7 +303,10 @@ export default function Repertoire() {
     };
 
     const handleSavePlaylistRename = async (playlistIdx) => {
-        if (!playlistRenameValue.trim()) return;
+        if (!playlistRenameValue.trim()) {
+            setToast({ message: 'Playlist name cannot be blank', type: 'error' });
+            return;
+        }
         setRenamingPlaylist(true);
         try {
             await renamePlaylist(user.uid, playlistIdx, playlistRenameValue);
@@ -474,7 +480,10 @@ export default function Repertoire() {
     };
 
     const handleConfirmCreatePlaylist = async () => {
-        if (!newPlaylistName.trim()) return;
+        if (!newPlaylistName.trim()) {
+            setToast({ message: 'Playlist name cannot be blank', type: 'error' });
+            return;
+        }
         setCreatingPlaylist(true);
         try {
             await createPlaylist(user.uid, newPlaylistName);

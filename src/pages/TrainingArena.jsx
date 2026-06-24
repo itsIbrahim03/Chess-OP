@@ -577,6 +577,9 @@ export default function TrainingArena() {
                     dests: getLegalMoves(),
                     events: { after: onMove }
                 },
+                premovable: {
+                    enabled: false
+                },
                 highlight: { lastMove: true, check: true }
             });
         } else {
@@ -594,6 +597,9 @@ export default function TrainingArena() {
             movable: {
                 color: puzzle.color,
                 dests: getLegalMoves()
+            },
+            premovable: {
+                enabled: false
             },
             drawable: { shapes: [] }
         });

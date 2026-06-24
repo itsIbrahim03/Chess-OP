@@ -809,6 +809,9 @@ export async function getAllPuzzlesGroupedByOpening(userId) {
  * Rename a puzzle by updating its customName field.
  */
 export async function renamePuzzle(userId, puzzleId, newName) {
+    if (!newName || !newName.trim()) {
+        throw new Error('Name cannot be blank');
+    }
     const puzzleRef = doc(db, 'puzzles', puzzleId);
     const snap = await getDoc(puzzleRef);
     if (!snap.exists()) {
@@ -950,6 +953,9 @@ export async function getUserPlaylists(userId) {
  * Find the first unused playlist index and reserve its name in the user's profile map
  */
 export async function createPlaylist(userId, name) {
+    if (!name || !name.trim()) {
+        throw new Error('Name cannot be blank');
+    }
     try {
         const userRef = doc(db, 'users', userId);
         const userSnap = await getDoc(userRef);
@@ -1057,6 +1063,9 @@ export async function enforcePlaylistLimits(userId) {
  * Rename one of the 3 playlists
  */
 export async function renamePlaylist(userId, playlistIndex, newName) {
+    if (!newName || !newName.trim()) {
+        throw new Error('Name cannot be blank');
+    }
     const userRef = doc(db, 'users', userId);
     await updateDoc(userRef, {
         [`playlistNames.${playlistIndex}`]: newName.trim()

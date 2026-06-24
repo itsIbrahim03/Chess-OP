@@ -360,10 +360,14 @@ export default function Settings() {
     };
 
     const handleSaveProfile = async () => {
+        if (!displayName.trim()) {
+            setMessage({ type: 'error', text: 'Display name cannot be blank' });
+            return;
+        }
         setSaving(true);
         try {
             await updateUserProfile(user.uid, {
-                displayName: displayName.trim() || 'Player',
+                displayName: displayName.trim(),
                 country,
                 flair,
                 photoUrl: photoUrl.trim()
@@ -575,7 +579,7 @@ export default function Settings() {
                             <div className="flex flex-col gap-4 bg-white/[0.02] border border-white/5 p-4 rounded-xl">
                                 <div className="flex items-center gap-4">
                                     {photoUrl ? (
-                                        <img src={photoUrl} alt="Avatar Preview" className="w-16 h-16 rounded-full border border-white/10 object-cover bg-chess-bg shrink-0" onError={(e) => { e.target.src = 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg'; }} />
+                                        <img src={photoUrl} alt="Avatar Preview" className="w-16 h-16 rounded-full border border-white/10 object-cover bg-chess-bg shrink-0" onError={(e) => { e.target.src = '/pieces/cburnett/wK.svg'; }} />
                                     ) : (
                                         <div className="w-16 h-16 rounded-full bg-chess-bg border border-white/10 flex items-center justify-center text-white font-bold text-xl shrink-0">
                                             {displayName[0]?.toUpperCase() || 'P'}
@@ -589,12 +593,12 @@ export default function Settings() {
 
                                 <div className="grid grid-cols-4 sm:grid-cols-7 gap-3">
                                     {[
-                                        { id: 'king', label: 'King', url: 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg' },
-                                        { id: 'queen', label: 'Queen', url: 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg' },
-                                        { id: 'rook', label: 'Rook', url: 'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg' },
-                                        { id: 'bishop', label: 'Bishop', url: 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg' },
-                                        { id: 'knight', label: 'Knight', url: 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg' },
-                                        { id: 'pawn', label: 'Pawn', url: 'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg' },
+                                        { id: 'king', label: 'King', url: '/pieces/cburnett/wK.svg' },
+                                        { id: 'queen', label: 'Queen', url: '/pieces/cburnett/wQ.svg' },
+                                        { id: 'rook', label: 'Rook', url: '/pieces/cburnett/wR.svg' },
+                                        { id: 'bishop', label: 'Bishop', url: '/pieces/cburnett/wB.svg' },
+                                        { id: 'knight', label: 'Knight', url: '/pieces/cburnett/wN.svg' },
+                                        { id: 'pawn', label: 'Pawn', url: '/pieces/cburnett/wP.svg' },
                                     ].map(piece => {
                                         const isSelected = photoUrl === piece.url;
                                         return (
@@ -619,12 +623,12 @@ export default function Settings() {
                                         onClick={() => fileInputRef.current?.click()}
                                         className={`flex flex-col items-center justify-center gap-1 p-2.5 rounded-lg border transition-all ${
                                             photoUrl && ![
-                                                'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg'
+                                                '/pieces/cburnett/wK.svg',
+                                                '/pieces/cburnett/wQ.svg',
+                                                '/pieces/cburnett/wR.svg',
+                                                '/pieces/cburnett/wB.svg',
+                                                '/pieces/cburnett/wN.svg',
+                                                '/pieces/cburnett/wP.svg'
                                             ].includes(photoUrl)
                                                 ? 'border-chess-accent bg-chess-accent/10 shadow-sm'
                                                 : 'border-white/5 bg-black/20 hover:border-white/10'

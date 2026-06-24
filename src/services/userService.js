@@ -412,7 +412,7 @@ export async function clearAllAccountData(userId) {
         lichessConnectedAt: data.lichessConnectedAt || null,
         country: 'PW',
         flair: 'trophy',
-        photoUrl: data.photoUrl || 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
+        photoUrl: data.photoUrl || '/pieces/cburnett/wN.svg',
         playlistNames: {}, // Reset to empty map to allow creating custom playlists correctly
         showWelcomeTour: false,
         pendingScan: null,
