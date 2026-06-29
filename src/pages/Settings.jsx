@@ -48,13 +48,21 @@ function useLichessVerification() {
     const [verifyState, setVerifyState] = useState('idle'); // idle | loading | valid | invalid
     const [verifyProfile, setVerifyProfile] = useState(null);
     const debounceTimer = useRef(null);
+    const lastVerifiedUsername = useRef('');
 
     const verifyImmediate = useCallback(async (username) => {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
         const trimmed = username ? username.trim() : '';
+        
+        // Skip redundant checks if already verified
+        if (trimmed === lastVerifiedUsername.current && verifyState !== 'idle') {
+            return;
+        }
+
         if (!trimmed || trimmed.length < 3) {
             setVerifyState('idle');
             setVerifyProfile(null);
+            lastVerifiedUsername.current = '';
             return;
         }
 
@@ -63,19 +71,26 @@ function useLichessVerification() {
             const result = await verifyLichessUsername(trimmed);
             setVerifyState(result.valid ? 'valid' : 'invalid');
             setVerifyProfile(result.valid ? result.profile : null);
+            lastVerifiedUsername.current = trimmed;
         } catch {
             setVerifyState('invalid');
             setVerifyProfile(null);
+            lastVerifiedUsername.current = trimmed;
         }
-    }, []);
+    }, [verifyState]);
 
     const verify = useCallback((username) => {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
 
         const trimmed = username ? username.trim() : '';
+        if (trimmed === lastVerifiedUsername.current && verifyState !== 'idle') {
+            return;
+        }
+
         if (!trimmed || trimmed.length < 3) {
             setVerifyState('idle');
             setVerifyProfile(null);
+            lastVerifiedUsername.current = '';
             return;
         }
 
@@ -83,15 +98,16 @@ function useLichessVerification() {
         debounceTimer.current = setTimeout(() => {
             verifyImmediate(username);
         }, 1500);
-    }, [verifyImmediate]);
+    }, [verifyImmediate, verifyState]);
 
     const reset = useCallback(() => {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
         setVerifyState('idle');
         setVerifyProfile(null);
+        lastVerifiedUsername.current = '';
     }, []);
 
-    return { verifyState, verifyProfile, verify, verifyImmediate, reset };
+    return { verifyState, verifyProfile, verify, verifyImmediate, reset, setVerifyState, setVerifyProfile };
 }
 
 // ─── Mini Board Preview Component ───────────────────────────────────────
@@ -255,7 +271,7 @@ export default function Settings() {
 
     // Lichess
     const [lichessUsername, setLichessUsername] = useState('');
-    const { verifyState, verifyProfile, verify, verifyImmediate, reset: resetVerify } = useLichessVerification();
+    const { verifyState, verifyProfile, verify, verifyImmediate, reset: resetVerify, setVerifyState, setVerifyProfile } = useLichessVerification();
 
     // Profile
     const [displayName, setDisplayName] = useState('');
@@ -338,18 +354,28 @@ export default function Settings() {
     };
 
     const handleLinkLichess = async () => {
-        if (!lichessUsername.trim()) {
+        const trimmed = lichessUsername.trim();
+        if (!trimmed) {
             setMessage({ type: 'error', text: 'Please enter a Lichess username' });
-            return;
-        }
-        if (verifyState === 'invalid') {
-            setMessage({ type: 'error', text: 'This Lichess username does not exist' });
             return;
         }
 
         setSaving(true);
         try {
-            await linkLichessAccount(user.uid, lichessUsername);
+            // Force verify if not already validated (e.g. clicked button while idle or loading)
+            if (verifyState !== 'valid') {
+                const verifyResult = await verifyLichessUsername(trimmed);
+                if (!verifyResult.valid) {
+                    setVerifyState('invalid');
+                    setMessage({ type: 'error', text: 'This Lichess username does not exist' });
+                    setSaving(false);
+                    return;
+                }
+                setVerifyState('valid');
+                setVerifyProfile(verifyResult.profile);
+            }
+
+            await linkLichessAccount(user.uid, trimmed);
             setMessage({ type: 'success', text: 'Lichess account linked successfully!' });
             await loadUserProfile();
         } catch (error) {
@@ -516,7 +542,6 @@ export default function Settings() {
                                         type="text"
                                         value={lichessUsername}
                                         onChange={handleLichessChange}
-                                        onBlur={() => verifyImmediate(lichessUsername)}
                                         placeholder="Enter Lichess username"
                                         className="w-full px-4 py-2 pr-10 bg-chess-bg border border-white/10 rounded-lg text-white placeholder:text-chess-text-secondary focus:outline-none focus:border-chess-accent transition-colors"
                                     />
@@ -535,7 +560,7 @@ export default function Settings() {
                                 </div>
                                 <button
                                     onClick={handleLinkLichess}
-                                    disabled={saving || verifyState === 'loading' || verifyState === 'invalid'}
+                                    disabled={saving || verifyState === 'invalid'}
                                     className="px-6 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-lg font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                 >
                                     {saving ? (
