@@ -293,7 +293,7 @@ export default function Login() {
       >
         <div className="absolute -inset-px bg-gradient-to-b from-chess-accent/20 via-white/5 to-chess-accent/10 rounded-2xl blur-[1.5px]" />
 
-        <div className="relative bg-chess-panel/40 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_48px_96px_-24px_rgba(0,0,0,0.8)] overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)]">
+        <div className="relative bg-chess-panel/40 backdrop-blur-3xl border border-white/10 rounded-2xl shadow-[0_48px_96px_-24px_rgba(0,0,0,0.8)] overflow-hidden transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)]">
 
           <div className="grid md:grid-cols-12">
 
@@ -321,7 +321,7 @@ export default function Login() {
                   <div className="flex gap-4 mb-6 bg-chess-bg/90 p-1 rounded-xl border border-white/5 relative">
                     {/* Sliding background indicator */}
                     <div
-                      className="absolute top-1 bottom-1 rounded-lg bg-white/10 shadow-lg transition-all duration-300 ease-[cubic-bezier(0.25,1,0.5,1)]"
+                      className="absolute top-1 bottom-1 rounded-lg bg-white/10 shadow-lg transition-all duration-800 ease-[cubic-bezier(0.25,1,0.5,1)]"
                       style={{
                         left: isSignUp ? '50%' : '4px',
                         width: 'calc(50% - 4px)',
@@ -330,7 +330,7 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => { setIsSignUp(false); setError(null); setFieldErrors({}); setResetSuccessMessage(""); }}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-300 relative z-10 ${
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-800 relative z-10 ${
                         !isSignUp ? "text-white" : "text-chess-text-secondary hover:text-white"
                       }`}
                     >
@@ -339,7 +339,7 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => { setIsSignUp(true); setError(null); setFieldErrors({}); setResetSuccessMessage(""); }}
-                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-300 relative z-10 ${
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold transition-colors duration-800 relative z-10 ${
                         isSignUp ? "text-white" : "text-chess-text-secondary hover:text-white"
                       }`}
                     >
@@ -371,7 +371,7 @@ export default function Login() {
 
                 <form onSubmit={handleEmailAuth} className="flex flex-col" noValidate>
                   {/* Full Name (Register only) */}
-                  <div className={`transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${isSignUp && !isForgotPassword ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                  <div className={`transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${isSignUp && !isForgotPassword ? 'max-h-[100px] opacity-100' : 'max-h-0 opacity-0 pointer-events-none'}`}>
                     <div className="space-y-1 pb-0">
                       <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Full Name</label>
                       <div className="relative">
@@ -384,20 +384,20 @@ export default function Login() {
                             if (fieldErrors.name) setFieldErrors(prev => ({ ...prev, name: null }));
                           }}
                           placeholder="e.g. Bobby Fischer"
-                          tabIndex={isSignUp && !isForgotPassword ? 0 : -1}
+                          autoComplete="name"
                           className={`w-full bg-chess-bg/75 border text-white rounded-lg py-2.5 px-10 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
                             fieldErrors.name ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
                           }`}
                         />
                       </div>
                       {fieldErrors.name && (
-                        <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.name}</p>
+                        <p className="text-xs text-rose-400 font-medium pl-1">{fieldErrors.name}</p>
                       )}
                     </div>
                   </div>
 
                   {/* Email */}
-                  <div className={`transition-all duration-300 ${(isSignUp && !isForgotPassword) ? 'mt-3.5' : 'mt-0'}`}>
+                  <div className={`transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] ${(isSignUp && !isForgotPassword) ? 'mt-3.5' : 'mt-0'}`}>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Email Address</label>
                       <div className="relative">
@@ -410,19 +410,20 @@ export default function Login() {
                             if (fieldErrors.email) setFieldErrors(prev => ({ ...prev, email: null }));
                           }}
                           placeholder="name@domain.com"
+                          autoComplete="email"
                           className={`w-full bg-chess-bg/75 border text-white rounded-lg py-2.5 px-10 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
                             fieldErrors.email ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
                           }`}
                         />
                       </div>
                       {fieldErrors.email && (
-                        <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.email}</p>
+                        <p className="text-xs text-rose-400 font-medium pl-1">{fieldErrors.email}</p>
                       )}
                     </div>
                   </div>
 
                   {/* Password */}
-                  <div className={`transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isForgotPassword ? 'max-h-[100px] opacity-100 mt-3.5' : 'max-h-0 opacity-0 mt-0'}`}>
+                  <div className={`transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isForgotPassword ? 'max-h-[100px] opacity-100 mt-3.5' : 'max-h-0 opacity-0 mt-0 pointer-events-none'}`}>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Password</label>
                       <div className="relative">
@@ -435,6 +436,7 @@ export default function Login() {
                             if (fieldErrors.password) setFieldErrors(prev => ({ ...prev, password: null }));
                           }}
                           placeholder="••••••••"
+                          autoComplete={isSignUp ? "new-password" : "current-password"}
                           className={`w-full bg-chess-bg/75 border text-white rounded-lg py-2.5 px-10 pr-11 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
                             fieldErrors.password ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
                           }`}
@@ -448,13 +450,13 @@ export default function Login() {
                         </button>
                       </div>
                       {fieldErrors.password && (
-                        <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.password}</p>
+                        <p className="text-xs text-rose-400 font-medium pl-1">{fieldErrors.password}</p>
                       )}
                     </div>
                   </div>
 
                   {/* Password Strength Matrix (Register only) */}
-                  <div className={`transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${isSignUp && !isForgotPassword ? 'max-h-[120px] opacity-100 mt-3' : 'max-h-0 opacity-0 mt-0'}`}>
+                  <div className={`transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${isSignUp && !isForgotPassword ? 'max-h-[120px] opacity-100 mt-3' : 'max-h-0 opacity-0 mt-0 pointer-events-none'}`}>
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 pt-1 pb-1">
                       {criteria.map((item) => {
                         const met = passwordStrength[item.key];
@@ -480,7 +482,7 @@ export default function Login() {
                   </div>
 
                   {/* Confirm Password (Register only) */}
-                  <div className={`transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${isSignUp && !isForgotPassword ? 'max-h-[120px] opacity-100 mt-3.5' : 'max-h-0 opacity-0 mt-0'}`}>
+                  <div className={`transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${isSignUp && !isForgotPassword ? 'max-h-[120px] opacity-100 mt-3.5' : 'max-h-0 opacity-0 mt-0 pointer-events-none'}`}>
                     <div className="space-y-1">
                       <label className="text-[9px] font-bold text-chess-text-secondary uppercase tracking-widest block">Confirm Password</label>
                       <div className="relative">
@@ -493,7 +495,7 @@ export default function Login() {
                             if (fieldErrors.confirmPassword) setFieldErrors(prev => ({ ...prev, confirmPassword: null }));
                           }}
                           placeholder="••••••••"
-                          tabIndex={isSignUp && !isForgotPassword ? 0 : -1}
+                          autoComplete="new-password"
                           className={`w-full bg-chess-bg/75 border text-white rounded-lg py-2.5 px-10 pr-11 focus:outline-none transition-colors placeholder:text-chess-text-secondary/30 text-sm font-medium ${
                             fieldErrors.confirmPassword ? "border-rose-500/50 focus:border-rose-500" : "border-white/10 focus:border-chess-accent/40"
                           }`}
@@ -502,19 +504,18 @@ export default function Login() {
                           type="button"
                           onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                           className="absolute right-3.5 top-1/2 -translate-y-1/2 text-chess-text-secondary hover:text-white transition-colors"
-                          tabIndex={isSignUp && !isForgotPassword ? 0 : -1}
                         >
                           {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                         </button>
                       </div>
                       {fieldErrors.confirmPassword && (
-                        <p className="text-xs text-rose-400 font-medium pl-1 animate-in">{fieldErrors.confirmPassword}</p>
+                        <p className="text-xs text-rose-400 font-medium pl-1">{fieldErrors.confirmPassword}</p>
                       )}
                     </div>
                   </div>
 
                   {/* Forgot Password Link (Sign In only) */}
-                  <div className={`flex justify-end transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isSignUp && !isForgotPassword ? 'max-h-[30px] opacity-100 mt-0.5' : 'max-h-0 opacity-0 mt-0'}`}>
+                  <div className={`flex justify-end transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isSignUp && !isForgotPassword ? 'max-h-[30px] opacity-100 mt-0.5' : 'max-h-0 opacity-0 mt-0'}`}>
                     <button
                       type="button"
                       onClick={() => { setIsForgotPassword(true); setError(null); setFieldErrors({}); setResetSuccessMessage(""); }}
@@ -525,7 +526,7 @@ export default function Login() {
                   </div>
 
                   {/* Remember Me (Sign In only) */}
-                  <div className={`transition-all duration-500 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isSignUp && !isForgotPassword ? 'max-h-[50px] opacity-100 mt-1' : 'max-h-0 opacity-0 mt-0'}`}>
+                  <div className={`transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)] overflow-hidden ${!isSignUp && !isForgotPassword ? 'max-h-[50px] opacity-100 mt-1' : 'max-h-0 opacity-0 mt-0'}`}>
                     <div className="flex items-center justify-between">
                       <label className="flex items-center gap-2 cursor-pointer group select-none">
                         <div className="relative">

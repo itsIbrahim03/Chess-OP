@@ -201,6 +201,11 @@ export default function IngestionWizard({ userId, onClose, onSaveSuccess }) {
     const handleNext = async () => {
         if (puzzles.length === 0 || saving) return;
         
+        if (!customName || !customName.trim()) {
+            showAlert('Puzzle name cannot be blank.', 'warning', 'Name Required');
+            return;
+        }
+        
         let finalPlIdx = playlistIndex;
         const isFav = playlistIndex === 'fav';
 

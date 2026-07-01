@@ -98,6 +98,8 @@ export default function App() {
             }
           />
 
+          {/* Catch-all: any unknown URL → landing page */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

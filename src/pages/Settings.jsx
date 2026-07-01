@@ -48,36 +48,66 @@ function useLichessVerification() {
     const [verifyState, setVerifyState] = useState('idle'); // idle | loading | valid | invalid
     const [verifyProfile, setVerifyProfile] = useState(null);
     const debounceTimer = useRef(null);
+    const lastVerifiedUsername = useRef('');
 
-    const verify = useCallback((username) => {
+    const verifyImmediate = useCallback(async (username) => {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        const trimmed = username ? username.trim() : '';
+        
+        // Skip redundant checks if already verified
+        if (trimmed === lastVerifiedUsername.current && verifyState !== 'idle') {
+            return;
+        }
 
-        if (!username || !username.trim()) {
+        if (!trimmed || trimmed.length < 3) {
             setVerifyState('idle');
             setVerifyProfile(null);
+            lastVerifiedUsername.current = '';
             return;
         }
 
         setVerifyState('loading');
-        debounceTimer.current = setTimeout(async () => {
-            try {
-                const result = await verifyLichessUsername(username);
-                setVerifyState(result.valid ? 'valid' : 'invalid');
-                setVerifyProfile(result.valid ? result.profile : null);
-            } catch {
-                setVerifyState('invalid');
-                setVerifyProfile(null);
-            }
-        }, 500);
-    }, []);
+        try {
+            const result = await verifyLichessUsername(trimmed);
+            setVerifyState(result.valid ? 'valid' : 'invalid');
+            setVerifyProfile(result.valid ? result.profile : null);
+            lastVerifiedUsername.current = trimmed;
+        } catch {
+            setVerifyState('invalid');
+            setVerifyProfile(null);
+            lastVerifiedUsername.current = trimmed;
+        }
+    }, [verifyState]);
+
+    const verify = useCallback((username) => {
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+
+        const trimmed = username ? username.trim() : '';
+        if (trimmed === lastVerifiedUsername.current && verifyState !== 'idle') {
+            return;
+        }
+
+        if (!trimmed || trimmed.length < 3) {
+            setVerifyState('idle');
+            setVerifyProfile(null);
+            lastVerifiedUsername.current = '';
+            return;
+        }
+
+        setVerifyState('loading');
+        debounceTimer.current = setTimeout(() => {
+            verifyImmediate(username);
+        }, 1500);
+    }, [verifyImmediate, verifyState]);
 
     const reset = useCallback(() => {
         if (debounceTimer.current) clearTimeout(debounceTimer.current);
         setVerifyState('idle');
         setVerifyProfile(null);
+        lastVerifiedUsername.current = '';
     }, []);
 
-    return { verifyState, verifyProfile, verify, reset };
+    return { verifyState, verifyProfile, verify, verifyImmediate, reset, setVerifyState, setVerifyProfile };
 }
 
 // ─── Mini Board Preview Component ───────────────────────────────────────
@@ -171,12 +201,13 @@ function ConfirmClearModal({ open, onClose, onConfirm, clearing }) {
                 </div>
 
                 <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 mb-6 text-sm text-chess-text-secondary space-y-1">
-                    <p>• All generated training puzzles</p>
-                    <p>• All analysed and processed games</p>
-                    <p>• Custom repertoire folders and lists</p>
-                    <p>• Active streaks and solve count history</p>
-                    <p>• Linked Lichess username connection</p>
-                    <p>• Custom settings preferences</p>
+                    <p>• All generated training puzzles (Deleted permanently)</p>
+                    <p>• All analysed and processed games (Deleted permanently)</p>
+                    <p>• All activity logs & stats (Deleted permanently)</p>
+                    <p>• Custom playlists & favorites (Reset to empty)</p>
+                    <p>• Linked Lichess username connection (Disconnected)</p>
+                    <p>• Level, XP, and streaks (Reset to Level 1, 0 XP)</p>
+                    <p>• Custom settings preferences (Reset to defaults)</p>
                 </div>
 
                 <div className="mb-6">
@@ -240,7 +271,7 @@ export default function Settings() {
 
     // Lichess
     const [lichessUsername, setLichessUsername] = useState('');
-    const { verifyState, verifyProfile, verify, reset: resetVerify } = useLichessVerification();
+    const { verifyState, verifyProfile, verify, verifyImmediate, reset: resetVerify, setVerifyState, setVerifyProfile } = useLichessVerification();
 
     // Profile
     const [displayName, setDisplayName] = useState('');
@@ -323,18 +354,28 @@ export default function Settings() {
     };
 
     const handleLinkLichess = async () => {
-        if (!lichessUsername.trim()) {
+        const trimmed = lichessUsername.trim();
+        if (!trimmed) {
             setMessage({ type: 'error', text: 'Please enter a Lichess username' });
-            return;
-        }
-        if (verifyState === 'invalid') {
-            setMessage({ type: 'error', text: 'This Lichess username does not exist' });
             return;
         }
 
         setSaving(true);
         try {
-            await linkLichessAccount(user.uid, lichessUsername);
+            // Force verify if not already validated (e.g. clicked button while idle or loading)
+            if (verifyState !== 'valid') {
+                const verifyResult = await verifyLichessUsername(trimmed);
+                if (!verifyResult.valid) {
+                    setVerifyState('invalid');
+                    setMessage({ type: 'error', text: 'This Lichess username does not exist' });
+                    setSaving(false);
+                    return;
+                }
+                setVerifyState('valid');
+                setVerifyProfile(verifyResult.profile);
+            }
+
+            await linkLichessAccount(user.uid, trimmed);
             setMessage({ type: 'success', text: 'Lichess account linked successfully!' });
             await loadUserProfile();
         } catch (error) {
@@ -360,10 +401,14 @@ export default function Settings() {
     };
 
     const handleSaveProfile = async () => {
+        if (!displayName.trim()) {
+            setMessage({ type: 'error', text: 'Display name cannot be blank' });
+            return;
+        }
         setSaving(true);
         try {
             await updateUserProfile(user.uid, {
-                displayName: displayName.trim() || 'Player',
+                displayName: displayName.trim(),
                 country,
                 flair,
                 photoUrl: photoUrl.trim()
@@ -515,7 +560,7 @@ export default function Settings() {
                                 </div>
                                 <button
                                     onClick={handleLinkLichess}
-                                    disabled={saving || verifyState === 'loading' || verifyState === 'invalid'}
+                                    disabled={saving || verifyState === 'invalid'}
                                     className="px-6 py-2 bg-chess-accent hover:bg-chess-accent-hover text-white rounded-lg font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                                 >
                                     {saving ? (
@@ -575,7 +620,7 @@ export default function Settings() {
                             <div className="flex flex-col gap-4 bg-white/[0.02] border border-white/5 p-4 rounded-xl">
                                 <div className="flex items-center gap-4">
                                     {photoUrl ? (
-                                        <img src={photoUrl} alt="Avatar Preview" className="w-16 h-16 rounded-full border border-white/10 object-cover bg-chess-bg shrink-0" onError={(e) => { e.target.src = 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg'; }} />
+                                        <img src={photoUrl} alt="Avatar Preview" className="w-16 h-16 rounded-full border border-white/10 object-cover bg-chess-bg shrink-0" onError={(e) => { e.target.src = '/pieces/cburnett/wK.svg'; }} />
                                     ) : (
                                         <div className="w-16 h-16 rounded-full bg-chess-bg border border-white/10 flex items-center justify-center text-white font-bold text-xl shrink-0">
                                             {displayName[0]?.toUpperCase() || 'P'}
@@ -589,12 +634,12 @@ export default function Settings() {
 
                                 <div className="grid grid-cols-4 sm:grid-cols-7 gap-3">
                                     {[
-                                        { id: 'king', label: 'King', url: 'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg' },
-                                        { id: 'queen', label: 'Queen', url: 'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg' },
-                                        { id: 'rook', label: 'Rook', url: 'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg' },
-                                        { id: 'bishop', label: 'Bishop', url: 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg' },
-                                        { id: 'knight', label: 'Knight', url: 'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg' },
-                                        { id: 'pawn', label: 'Pawn', url: 'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg' },
+                                        { id: 'king', label: 'King', url: '/pieces/cburnett/wK.svg' },
+                                        { id: 'queen', label: 'Queen', url: '/pieces/cburnett/wQ.svg' },
+                                        { id: 'rook', label: 'Rook', url: '/pieces/cburnett/wR.svg' },
+                                        { id: 'bishop', label: 'Bishop', url: '/pieces/cburnett/wB.svg' },
+                                        { id: 'knight', label: 'Knight', url: '/pieces/cburnett/wN.svg' },
+                                        { id: 'pawn', label: 'Pawn', url: '/pieces/cburnett/wP.svg' },
                                     ].map(piece => {
                                         const isSelected = photoUrl === piece.url;
                                         return (
@@ -619,12 +664,12 @@ export default function Settings() {
                                         onClick={() => fileInputRef.current?.click()}
                                         className={`flex flex-col items-center justify-center gap-1 p-2.5 rounded-lg border transition-all ${
                                             photoUrl && ![
-                                                'https://upload.wikimedia.org/wikipedia/commons/4/42/Chess_klt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/1/15/Chess_qlt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/7/72/Chess_rlt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/b/b1/Chess_blt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/7/70/Chess_nlt45.svg',
-                                                'https://upload.wikimedia.org/wikipedia/commons/4/45/Chess_plt45.svg'
+                                                '/pieces/cburnett/wK.svg',
+                                                '/pieces/cburnett/wQ.svg',
+                                                '/pieces/cburnett/wR.svg',
+                                                '/pieces/cburnett/wB.svg',
+                                                '/pieces/cburnett/wN.svg',
+                                                '/pieces/cburnett/wP.svg'
                                             ].includes(photoUrl)
                                                 ? 'border-chess-accent bg-chess-accent/10 shadow-sm'
                                                 : 'border-white/5 bg-black/20 hover:border-white/10'

@@ -137,14 +137,18 @@ export default function DashboardLayout({ children }) {
         const userRef = doc(db, 'users', user.uid);
         const unsubscribe = onSnapshot(userRef, (snapshot) => {
             if (snapshot.exists()) {
-                setProfileData(snapshot.data());
+                const data = snapshot.data();
+                setProfileData(data);
+                if (data.onboardingCompleted !== true) {
+                    navigate('/onboarding');
+                }
             }
         }, (error) => {
             console.error("Error listening to profile changes:", error);
         });
 
         return () => unsubscribe();
-    }, [user?.uid]);
+    }, [user?.uid, navigate]);
 
 
 
